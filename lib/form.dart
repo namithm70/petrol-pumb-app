@@ -491,19 +491,22 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     if (scannedValue != null && mounted) {
       setState(() {
         _barcodeController.text = scannedValue!;
-        _cardNumberController.text = scannedValue!;
       });
       await _lookupCustomerByCardNumber(scannedValue!, showNotFoundSnackbar: true);
     }
   }
   
   Future<void> _addCustomer() async {
-    if (_customerNameController.text.isNotEmpty && _cardNumberController.text.isNotEmpty) {
+    final cardNumber = _cardNumberController.text.trim();
+    final barcode = _barcodeController.text.trim();
+    final resolvedCardNumber = cardNumber.isNotEmpty ? cardNumber : barcode;
+
+    if (_customerNameController.text.isNotEmpty && resolvedCardNumber.isNotEmpty) {
       try {
         final uri = Uri.parse("$_backendBaseUrl/api/customers");
         final payload = {
           "name": _customerNameController.text,
-          "cardNumber": _cardNumberController.text,
+          "cardNumber": resolvedCardNumber,
           "mobile": _mobileController.text,
         };
         final resp = await http
@@ -523,7 +526,15 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
           return;
         }
         if (resp.statusCode != 200) {
-          throw Exception("HTTP ${resp.statusCode}");
+          String detail = "HTTP ${resp.statusCode}";
+          try {
+            final decodedError = jsonDecode(resp.body) as Map<String, dynamic>;
+            final errorMessage = decodedError["error"] as String?;
+            if (errorMessage != null && errorMessage.isNotEmpty) {
+              detail = errorMessage;
+            }
+          } catch (_) {}
+          throw Exception(detail);
         }
 
         final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -556,6 +567,10 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
           );
         }
       }
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Name and card number are required")),
+      );
     }
   }
 
@@ -1962,7 +1977,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                                 const SizedBox(width: 10),
                                 ElevatedButton(
                                   onPressed: () => _lookupCustomerByCardNumber(
-                                    _cardNumberController.text,
+                                    _cardNumberController.text.trim().isNotEmpty
+                                        ? _cardNumberController.text
+                                        : _barcodeController.text,
                                     showNotFoundSnackbar: true,
                                   ),
                                   style: ElevatedButton.styleFrom(
