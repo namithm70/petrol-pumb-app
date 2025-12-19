@@ -16,6 +16,7 @@ const CARD_NUMBER_MAX = 128;
 function mapProductRow(row) {
   return {
     name: row.name,
+    category: row.category,
     pricePerUnit: Number(row.pricePerUnit ?? row.price_per_unit),
     unit: row.unit,
     purchasePrice: Number(row.purchasePrice ?? row.purchase_price),
@@ -37,6 +38,15 @@ function mapRedeemableRow(row) {
     name: row.name,
     pointsRequired: Number(row.points_required),
     stock: Number(row.stock),
+  };
+}
+
+function mapNotificationRow(row) {
+  return {
+    id: Number(row.id),
+    title: row.title,
+    message: row.message,
+    createdAt: row.created_at.toISOString(),
   };
 }
 
@@ -80,6 +90,20 @@ function normalizeMobile(input) {
   return trimmed;
 }
 
+function deriveCategoryFromName(name) {
+  const normalized = String(name || '').toLowerCase();
+  if (normalized.includes('petrol') || normalized.includes('diesel')) {
+    return 'Fuel';
+  }
+  if (normalized.includes('coolant')) {
+    return 'Coolant';
+  }
+  if (normalized.includes('oil')) {
+    return 'Oil';
+  }
+  return 'Other';
+}
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
@@ -87,7 +111,7 @@ app.get('/api/health', (req, res) => {
 app.get('/api/products', async (req, res) => {
   try {
     const { rows } = await db.query(
-      'SELECT name, price_per_unit, unit, purchase_price, stock FROM products ORDER BY name'
+      'SELECT name, category, price_per_unit, unit, purchase_price, stock FROM products ORDER BY name'
     );
     res.json({ products: rows.map(mapProductRow) });
   } catch (err) {
@@ -109,16 +133,19 @@ app.put('/api/products', async (req, res) => {
       if (!item?.name) {
         throw new Error('Product name is required');
       }
+      const category = item.category || item.productCategory || deriveCategoryFromName(item.name);
       await client.query(
-        `INSERT INTO products (name, price_per_unit, unit, purchase_price, stock)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO products (name, category, price_per_unit, unit, purchase_price, stock)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (name) DO UPDATE SET
+           category = EXCLUDED.category,
            price_per_unit = EXCLUDED.price_per_unit,
            unit = EXCLUDED.unit,
            purchase_price = EXCLUDED.purchase_price,
            stock = EXCLUDED.stock`,
         [
           item.name,
+          category,
           Number(item.pricePerUnit ?? item.price_per_unit ?? 0),
           item.unit || 'L',
           Number(item.purchasePrice ?? item.purchase_price ?? 0),
@@ -127,7 +154,7 @@ app.put('/api/products', async (req, res) => {
       );
     }
     const { rows } = await client.query(
-      'SELECT name, price_per_unit, unit, purchase_price, stock FROM products ORDER BY name'
+      'SELECT name, category, price_per_unit, unit, purchase_price, stock FROM products ORDER BY name'
     );
     await client.query('COMMIT');
     res.json({ products: rows.map(mapProductRow) });
@@ -142,9 +169,9 @@ app.put('/api/products', async (req, res) => {
 
 app.get('/api/bootstrap', async (req, res) => {
   try {
-    const [productsResult, customersResult, redeemablesResult, settingsResult, salesResult] =
+    const [productsResult, customersResult, redeemablesResult, settingsResult, salesResult, notificationsResult] =
       await Promise.all([
-        db.query('SELECT name, price_per_unit, unit, purchase_price, stock FROM products ORDER BY name'),
+        db.query('SELECT name, category, price_per_unit, unit, purchase_price, stock FROM products ORDER BY name'),
         db.query('SELECT name, card_number, mobile, points FROM customers ORDER BY name'),
         db.query('SELECT name, points_required, stock FROM redeemable_products ORDER BY name'),
         db.query('SELECT key, value FROM settings'),
@@ -163,6 +190,7 @@ app.get('/api/bootstrap', async (req, res) => {
            LEFT JOIN customers c ON s.customer_id = c.id
            ORDER BY s.created_at DESC`
         ),
+        db.query('SELECT id, title, message, created_at FROM push_notifications ORDER BY created_at DESC'),
       ]);
 
     const settings = {
@@ -192,6 +220,7 @@ app.get('/api/bootstrap', async (req, res) => {
       redeemables: redeemablesResult.rows.map(mapRedeemableRow),
       settings,
       sales,
+      notifications: notificationsResult.rows.map(mapNotificationRow),
     });
   } catch (err) {
     console.error('GET /api/bootstrap failed:', err);
@@ -508,6 +537,49 @@ app.post('/api/redemptions', async (req, res) => {
     res.status(400).json({ error: err.message || 'Failed to redeem points' });
   } finally {
     client.release();
+  }
+});
+
+app.get('/api/notifications', async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT id, title, message, created_at FROM push_notifications ORDER BY created_at DESC'
+    );
+    res.json({ notifications: rows.map(mapNotificationRow) });
+  } catch (err) {
+    console.error('GET /api/notifications failed:', err);
+    res.status(500).json({ error: 'Failed to load notifications' });
+  }
+});
+
+app.post('/api/notifications', async (req, res) => {
+  const { title, message } = req.body || {};
+  if (!title || !message) {
+    return res.status(400).json({ error: 'title and message are required' });
+  }
+  try {
+    const { rows } = await db.query(
+      'INSERT INTO push_notifications (title, message) VALUES ($1, $2) RETURNING id, title, message, created_at',
+      [title, message]
+    );
+    res.json({ notification: mapNotificationRow(rows[0]) });
+  } catch (err) {
+    console.error('POST /api/notifications failed:', err);
+    res.status(500).json({ error: 'Failed to create notification' });
+  }
+});
+
+app.delete('/api/notifications/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ error: 'Invalid id' });
+  }
+  try {
+    await db.query('DELETE FROM push_notifications WHERE id = $1', [id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE /api/notifications failed:', err);
+    res.status(500).json({ error: 'Failed to delete notification' });
   }
 });
 

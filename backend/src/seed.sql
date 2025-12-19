@@ -1,11 +1,12 @@
-INSERT INTO products (name, price_per_unit, unit, purchase_price, stock) VALUES
-  ('Petrol', 100.00, 'L', 90.00, 5000),
-  ('Diesel', 90.00, 'L', 80.00, 4000),
-  ('Engine Oil', 500.00, 'L', 400.00, 200),
-  ('Gear Oil', 450.00, 'L', 350.00, 150),
-  ('Brake Oil', 300.00, 'L', 250.00, 100),
-  ('Coolant', 250.00, 'L', 200.00, 80)
+INSERT INTO products (name, category, price_per_unit, unit, purchase_price, stock) VALUES
+  ('Petrol', 'Fuel', 100.00, 'L', 90.00, 5000),
+  ('Diesel', 'Fuel', 90.00, 'L', 80.00, 4000),
+  ('Engine Oil', 'Oil', 500.00, 'L', 400.00, 200),
+  ('Gear Oil', 'Oil', 450.00, 'L', 350.00, 150),
+  ('Brake Oil', 'Oil', 300.00, 'L', 250.00, 100),
+  ('Coolant', 'Coolant', 250.00, 'L', 200.00, 80)
 ON CONFLICT (name) DO UPDATE SET
+  category = EXCLUDED.category,
   price_per_unit = EXCLUDED.price_per_unit,
   unit = EXCLUDED.unit,
   purchase_price = EXCLUDED.purchase_price,
@@ -44,3 +45,5 @@ INSERT INTO settings (key, value) VALUES
   ('amount', 10)
 ON CONFLICT (key) DO UPDATE SET
   value = EXCLUDED.value;
+
+-- Optional starter notifications (empty by default)

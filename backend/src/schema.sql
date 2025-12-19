@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS products (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
+  category TEXT NOT NULL DEFAULT 'Other',
   price_per_unit NUMERIC(12, 2) NOT NULL,
   unit TEXT NOT NULL DEFAULT 'L',
   purchase_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
@@ -51,4 +52,11 @@ CREATE TABLE IF NOT EXISTS redemption_items (
   redemption_id INTEGER NOT NULL REFERENCES redemptions(id) ON DELETE CASCADE,
   redeemable_product_id INTEGER NOT NULL REFERENCES redeemable_products(id) ON DELETE RESTRICT,
   quantity INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS push_notifications (
+  id SERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

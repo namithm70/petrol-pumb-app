@@ -87,10 +87,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   ];
   
   // Push notifications messages
-  List<PushNotificationMessage> pushNotifications = [
-    PushNotificationMessage(title: "Welcome Back!", message: "Thank you for your loyalty!"),
-    PushNotificationMessage(title: "Special Offer", message: "Earn double points today!"),
-  ];
+  List<PushNotificationMessage> pushNotifications = [];
   
   List<Customer> customers = [
     Customer(name: "Rajesh Kumar", cardNumber: "BPCL12345678", mobile: "9876543210", points: 1250),
@@ -277,6 +274,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       final customersPayload = (decoded["customers"] as List?)?.cast<dynamic>() ?? [];
       final redeemablesPayload = (decoded["redeemables"] as List?)?.cast<dynamic>() ?? [];
       final settingsPayload = (decoded["settings"] as Map?)?.cast<String, dynamic>() ?? {};
+      final notificationsPayload = (decoded["notifications"] as List?)?.cast<dynamic>() ?? [];
       final salesPayload = (decoded["sales"] as List?)?.cast<dynamic>() ?? [];
 
       final loadedProducts = productsPayload.map((item) {
@@ -360,6 +358,17 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
 
           if (loadedSales.isNotEmpty) {
             salesRecords = loadedSales;
+          }
+
+          if (notificationsPayload.isNotEmpty) {
+            pushNotifications = notificationsPayload.map((item) {
+              final map = (item as Map).cast<String, dynamic>();
+              return PushNotificationMessage(
+                id: (map["id"] as num?)?.toInt(),
+                title: map["title"] as String? ?? "",
+                message: map["message"] as String? ?? "",
+              );
+            }).toList();
           }
         });
       }
@@ -812,6 +821,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Points settings saved ✅")),
         );
+        unawaited(_loadBootstrapFromBackend(showErrorSnackbar: false));
       }
     } catch (e) {
       if (mounted) {
@@ -909,6 +919,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(successMessage)),
         );
+        unawaited(_loadBootstrapFromBackend(showErrorSnackbar: false));
       }
     } catch (e) {
       if (mounted) {
@@ -1144,20 +1155,70 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   }
   
   // Push notification methods
-  void _createPushNotification(TextEditingController titleController, TextEditingController messageController) {
-    if (titleController.text.isNotEmpty && messageController.text.isNotEmpty) {
+  Future<void> _createPushNotification(
+    TextEditingController titleController,
+    TextEditingController messageController,
+  ) async {
+    if (titleController.text.isEmpty || messageController.text.isEmpty) {
+      return;
+    }
+
+    try {
+      final uri = Uri.parse("$_backendBaseUrl/api/notifications");
+      final resp = await http
+          .post(
+            uri,
+            headers: const {"Content-Type": "application/json"},
+            body: jsonEncode({
+              "title": titleController.text,
+              "message": messageController.text,
+            }),
+          )
+          .timeout(const Duration(seconds: 5));
+
+      if (resp.statusCode != 200) {
+        throw Exception("HTTP ${resp.statusCode}");
+      }
+
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      final map = (decoded["notification"] as Map).cast<String, dynamic>();
+      final newNotification = PushNotificationMessage(
+        id: (map["id"] as num?)?.toInt(),
+        title: map["title"] as String? ?? "",
+        message: map["message"] as String? ?? "",
+      );
+
       setState(() {
-        pushNotifications.add(
-          PushNotificationMessage(
-            title: titleController.text,
-            message: messageController.text,
-          ),
-        );
+        pushNotifications.insert(0, newNotification);
       });
       titleController.clear();
       messageController.clear();
       Navigator.pop(context);
       _showAlert("Success", "Push notification created!");
+    } catch (e) {
+      _showAlert("Failed", "Could not create notification: $e");
+    }
+  }
+
+  Future<void> _deleteNotification(PushNotificationMessage msg, int index) async {
+    if (msg.id == null) {
+      setState(() {
+        pushNotifications.removeAt(index);
+      });
+      return;
+    }
+
+    try {
+      final uri = Uri.parse("$_backendBaseUrl/api/notifications/${msg.id}");
+      final resp = await http.delete(uri).timeout(const Duration(seconds: 5));
+      if (resp.statusCode != 200) {
+        throw Exception("HTTP ${resp.statusCode}");
+      }
+      setState(() {
+        pushNotifications.removeAt(index);
+      });
+    } catch (e) {
+      _showAlert("Failed", "Could not delete notification: $e");
     }
   }
   
@@ -3697,9 +3758,7 @@ Column(
                                   ),
                                   IconButton(
                                     onPressed: () {
-                                      setState(() {
-                                        pushNotifications.removeAt(index);
-                                      });
+                                      _deleteNotification(msg, index);
                                     },
                                     icon: const Icon(Icons.delete, color: Colors.red, size: 20),
                                     padding: EdgeInsets.zero,
@@ -4341,10 +4400,12 @@ class RedemptionItem {
 }
 
 class PushNotificationMessage {
+  int? id;
   String title;
   String message;
   
   PushNotificationMessage({
+    this.id,
     required this.title,
     required this.message,
   });
