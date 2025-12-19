@@ -57,7 +57,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   List<Customer> _filteredCustomers = [];
 
   // Backend sync (prices)
-  static const String _backendBaseUrl = "http://10.0.2.2:3001"; // Android emulator -> host machine
+  static const String _backendBaseUrl = "https://bpclpos-backend.onrender.com";
   Timer? _priceSyncTimer;
   DateTime? _pricesLastSyncedAt;
   bool _priceSyncInProgress = false;
