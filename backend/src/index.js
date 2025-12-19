@@ -11,8 +11,8 @@ app.use(cors());
 app.use(express.json());
 
 const CARD_NUMBER_PATTERN = /^[A-Z0-9-]+$/;
-const CARD_NUMBER_MIN = 6;
-const CARD_NUMBER_MAX = 32;
+const CARD_NUMBER_MIN = 3;
+const CARD_NUMBER_MAX = 64;
 
 function mapProductRow(row) {
   return {
@@ -232,6 +232,27 @@ app.post('/api/customers', async (req, res) => {
   } catch (err) {
     console.error('POST /api/customers failed:', err);
     res.status(400).json({ error: err.message || 'Failed to add customer' });
+  }
+});
+
+app.get('/api/customers', async (req, res) => {
+  const { cardNumber } = req.query || {};
+  if (!cardNumber) {
+    return res.status(400).json({ error: 'cardNumber query param is required' });
+  }
+  try {
+    const normalizedCard = normalizeCardNumber(String(cardNumber));
+    const { rows } = await db.query(
+      'SELECT name, card_number, mobile, points FROM customers WHERE card_number = $1',
+      [normalizedCard]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+    return res.json({ customer: mapCustomerRow(rows[0]) });
+  } catch (err) {
+    console.error('GET /api/customers failed:', err);
+    return res.status(400).json({ error: err.message || 'Invalid card number' });
   }
 });
 

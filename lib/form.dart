@@ -556,9 +556,8 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     if (trimmed.isEmpty) return;
 
     try {
-      final uri = Uri.parse(
-        "$_backendBaseUrl/api/customers/${Uri.encodeComponent(trimmed)}",
-      );
+      final uri = Uri.parse("$_backendBaseUrl/api/customers")
+          .replace(queryParameters: {"cardNumber": trimmed});
       final resp = await http.get(uri).timeout(const Duration(seconds: 5));
       if (resp.statusCode == 404) {
         if (mounted && showNotFoundSnackbar) {
