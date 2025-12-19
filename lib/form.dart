@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
+import 'package:http/http.dart' as http;
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 class MyFormCard extends StatefulWidget {
   const MyFormCard({super.key});
@@ -51,6 +55,13 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   Customer? _selectedCustomer;
   bool _showCustomerList = false;
   List<Customer> _filteredCustomers = [];
+
+  // Backend sync (prices)
+  static const String _backendBaseUrl = "http://10.0.2.2:3001"; // Android emulator -> host machine
+  Timer? _priceSyncTimer;
+  DateTime? _pricesLastSyncedAt;
+  bool _priceSyncInProgress = false;
+  String? _priceSyncError;
   
   List<Product> products = [
     Product(name: "Petrol", pricePerUnit: 100.0, unit: "L", purchasePrice: 90.0, stock: 5000),
@@ -126,6 +137,15 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     
     // Add listener for customer search
     _customerSearchController.addListener(_filterCustomers);
+
+    // Initial data load from backend
+    unawaited(_loadBootstrapFromBackend(showErrorSnackbar: false));
+
+    // Auto-sync latest prices from backend
+    unawaited(_syncPricesFromBackend(showErrorSnackbar: false));
+    _priceSyncTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      unawaited(_syncPricesFromBackend(showErrorSnackbar: false));
+    });
   }
   
   @override
@@ -155,8 +175,216 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     for (var controller in _stockControllers.values) {
       controller.dispose();
     }
+
+    _priceSyncTimer?.cancel();
     
     super.dispose();
+  }
+
+  Future<void> _syncPricesFromBackend({required bool showErrorSnackbar}) async {
+    if (_priceSyncInProgress) return;
+    _priceSyncInProgress = true;
+    _priceSyncError = null;
+
+    try {
+      final uri = Uri.parse("$_backendBaseUrl/api/products");
+      final resp = await http.get(uri).timeout(const Duration(seconds: 5));
+      if (resp.statusCode != 200) {
+        throw Exception("HTTP ${resp.statusCode}");
+      }
+
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      final productsPayload = (decoded["products"] as List?)?.cast<dynamic>() ?? [];
+
+      final Map<String, Product> byName = {
+        for (final p in products) p.name: p,
+      };
+
+      for (final item in productsPayload) {
+        final map = (item as Map).cast<String, dynamic>();
+        final name = map["name"] as String;
+        final pricePerUnit = (map["pricePerUnit"] as num).toDouble();
+        final unit = (map["unit"] as String?) ?? "L";
+        final purchasePrice = (map["purchasePrice"] as num?)?.toDouble() ?? 0.0;
+        final stock = (map["stock"] as num?)?.toInt() ?? 0;
+
+        final product = byName[name];
+        if (product == null) continue;
+
+        product.pricePerUnit = pricePerUnit;
+        product.unit = unit;
+        if (purchasePrice > 0) {
+          product.purchasePrice = purchasePrice;
+        }
+        product.stock = stock;
+
+        // Update UI controllers where applicable
+        final controller = _sellingPriceControllers[name];
+        if (controller != null) {
+          controller.text = pricePerUnit.toStringAsFixed(2);
+        }
+        final purchaseController = _purchasePriceControllers[name];
+        if (purchaseController != null && purchasePrice > 0) {
+          purchaseController.text = purchasePrice.toStringAsFixed(2);
+        }
+        final stockController = _stockControllers[name];
+        if (stockController != null) {
+          stockController.text = stock.toString();
+        }
+      }
+
+      // If currently selected product got updated, reflect it in calculation
+      final selected = byName[_selectedProduct];
+      if (selected != null) {
+        _pricePerUnit = selected.pricePerUnit;
+        _purchasePrice = selected.purchasePrice;
+      }
+
+      _pricesLastSyncedAt = DateTime.now();
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      _priceSyncError = e.toString();
+      if (mounted && showErrorSnackbar) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Price sync failed: $_priceSyncError")),
+        );
+      }
+    } finally {
+      _priceSyncInProgress = false;
+    }
+  }
+
+  Future<void> _loadBootstrapFromBackend({required bool showErrorSnackbar}) async {
+    try {
+      final uri = Uri.parse("$_backendBaseUrl/api/bootstrap");
+      final resp = await http.get(uri).timeout(const Duration(seconds: 5));
+      if (resp.statusCode != 200) {
+        throw Exception("HTTP ${resp.statusCode}");
+      }
+
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      final productsPayload = (decoded["products"] as List?)?.cast<dynamic>() ?? [];
+      final customersPayload = (decoded["customers"] as List?)?.cast<dynamic>() ?? [];
+      final redeemablesPayload = (decoded["redeemables"] as List?)?.cast<dynamic>() ?? [];
+      final settingsPayload = (decoded["settings"] as Map?)?.cast<String, dynamic>() ?? {};
+      final salesPayload = (decoded["sales"] as List?)?.cast<dynamic>() ?? [];
+
+      final loadedProducts = productsPayload.map((item) {
+        final map = (item as Map).cast<String, dynamic>();
+        return Product(
+          name: map["name"] as String,
+          pricePerUnit: (map["pricePerUnit"] as num).toDouble(),
+          unit: (map["unit"] as String?) ?? "L",
+          purchasePrice: (map["purchasePrice"] as num?)?.toDouble() ?? 0.0,
+          stock: (map["stock"] as num?)?.toInt() ?? 0,
+        );
+      }).toList();
+
+      final loadedCustomers = customersPayload.map((item) {
+        final map = (item as Map).cast<String, dynamic>();
+        return Customer(
+          name: map["name"] as String,
+          cardNumber: map["cardNumber"] as String,
+          mobile: map["mobile"] as String,
+          points: (map["points"] as num).toInt(),
+        );
+      }).toList();
+
+      final loadedRedeemables = redeemablesPayload.map((item) {
+        final map = (item as Map).cast<String, dynamic>();
+        return RedeemableProduct(
+          name: map["name"] as String,
+          pointsRequired: (map["pointsRequired"] as num).toInt(),
+          stock: (map["stock"] as num).toInt(),
+        );
+      }).toList();
+
+      final loadedSales = salesPayload.map((item) {
+        final map = (item as Map).cast<String, dynamic>();
+        return SaleRecord(
+          product: map["product"] as String,
+          units: (map["units"] as num).toInt(),
+          amount: (map["amount"] as num).toDouble(),
+          purchaseCost: (map["purchaseCost"] as num).toDouble(),
+          customer: map["customer"] as String,
+          date: DateTime.parse(map["date"] as String),
+          pointsEarned: (map["pointsEarned"] as num).toInt(),
+          profit: (map["profit"] as num?)?.toDouble(),
+        );
+      }).toList();
+
+      if (mounted) {
+        setState(() {
+          if (loadedProducts.isNotEmpty) {
+            products = loadedProducts;
+            _rebuildProductControllers();
+            if (!products.any((p) => p.name == _selectedProduct) && products.isNotEmpty) {
+              _selectedProduct = products.first.name;
+            }
+            final selected = products.firstWhere((p) => p.name == _selectedProduct, orElse: () => products.first);
+            _pricePerUnit = selected.pricePerUnit;
+            _purchasePrice = selected.purchasePrice;
+          }
+
+          if (loadedCustomers.isNotEmpty) {
+            customers = loadedCustomers;
+            _filteredCustomers = List.from(customers);
+          }
+
+          if (loadedRedeemables.isNotEmpty) {
+            redeemableProducts = loadedRedeemables;
+          }
+
+          if (settingsPayload.isNotEmpty) {
+            pointsSettings = {
+              "petrol": (settingsPayload["petrol"] as num?)?.toInt() ?? 1,
+              "diesel": (settingsPayload["diesel"] as num?)?.toInt() ?? 1,
+              "oil": (settingsPayload["oil"] as num?)?.toInt() ?? 2,
+              "amount": (settingsPayload["amount"] as num?)?.toInt() ?? 10,
+            };
+            _petrolPointsController.text = pointsSettings["petrol"].toString();
+            _dieselPointsController.text = pointsSettings["diesel"].toString();
+            _oilPointsController.text = pointsSettings["oil"].toString();
+            _amountPointsController.text = pointsSettings["amount"].toString();
+          }
+
+          if (loadedSales.isNotEmpty) {
+            salesRecords = loadedSales;
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted && showErrorSnackbar) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Failed to load backend data: $e")),
+        );
+      }
+    }
+  }
+
+  void _rebuildProductControllers() {
+    for (var controller in _purchasePriceControllers.values) {
+      controller.dispose();
+    }
+    for (var controller in _sellingPriceControllers.values) {
+      controller.dispose();
+    }
+    for (var controller in _stockControllers.values) {
+      controller.dispose();
+    }
+    _purchasePriceControllers.clear();
+    _sellingPriceControllers.clear();
+    _stockControllers.clear();
+    for (var product in products) {
+      _purchasePriceControllers[product.name] =
+          TextEditingController(text: product.purchasePrice.toString());
+      _sellingPriceControllers[product.name] =
+          TextEditingController(text: product.pricePerUnit.toString());
+      _stockControllers[product.name] =
+          TextEditingController(text: product.stock.toString());
+    }
   }
   
   void _filterCustomers() {
@@ -214,36 +442,175 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     });
   }
   
-  void _simulateBarcodeScan() {
-    // Generate random barcode
-    Random random = Random();
-    String barcode = "BPCL${random.nextInt(90000000) + 10000000}";
-    _barcodeController.text = barcode;
-    setState(() {
-      _cardNumberController.text = barcode;
-    });
-  }
-  
-  void _addCustomer() {
-    if (_customerNameController.text.isNotEmpty && _cardNumberController.text.isNotEmpty) {
-      setState(() {
-        Customer newCustomer = Customer(
-          name: _customerNameController.text,
-          cardNumber: _cardNumberController.text,
-          mobile: _mobileController.text,
-          points: 0,
+  Future<void> _scanBarcode() async {
+    final controller = MobileScannerController();
+    String? scannedValue;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text("Scan Barcode"),
+          content: SizedBox(
+            width: 280,
+            height: 280,
+            child: MobileScanner(
+              controller: controller,
+              onDetect: (capture) {
+                if (scannedValue != null) return;
+                final barcodes = capture.barcodes;
+                if (barcodes.isEmpty) return;
+                final value = barcodes.first.rawValue;
+                if (value == null || value.isEmpty) return;
+                scannedValue = value;
+                Navigator.of(dialogContext).pop();
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text("Cancel"),
+            ),
+          ],
         );
-        customers.add(newCustomer);
-        _filteredCustomers.add(newCustomer);
-        _customerNameController.clear();
-        _cardNumberController.clear();
-        _mobileController.clear();
-        _barcodeController.clear();
+      },
+    );
+
+    controller.dispose();
+
+    if (scannedValue != null && mounted) {
+      setState(() {
+        _barcodeController.text = scannedValue!;
+        _cardNumberController.text = scannedValue!;
       });
+      await _lookupCustomerByCardNumber(scannedValue!, showNotFoundSnackbar: true);
     }
   }
   
-  void _processSale() {
+  Future<void> _addCustomer() async {
+    if (_customerNameController.text.isNotEmpty && _cardNumberController.text.isNotEmpty) {
+      try {
+        final uri = Uri.parse("$_backendBaseUrl/api/customers");
+        final payload = {
+          "name": _customerNameController.text,
+          "cardNumber": _cardNumberController.text,
+          "mobile": _mobileController.text,
+        };
+        final resp = await http
+            .post(
+              uri,
+              headers: const {"Content-Type": "application/json"},
+              body: jsonEncode(payload),
+            )
+            .timeout(const Duration(seconds: 5));
+
+        if (resp.statusCode == 409) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Card number already exists")),
+            );
+          }
+          return;
+        }
+        if (resp.statusCode != 200) {
+          throw Exception("HTTP ${resp.statusCode}");
+        }
+
+        final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+        final customerMap = (decoded["customer"] as Map).cast<String, dynamic>();
+        final newCustomer = Customer(
+          name: customerMap["name"] as String,
+          cardNumber: customerMap["cardNumber"] as String,
+          mobile: customerMap["mobile"] as String,
+          points: (customerMap["points"] as num).toInt(),
+        );
+
+        setState(() {
+          customers.add(newCustomer);
+          _filteredCustomers.add(newCustomer);
+          _customerNameController.clear();
+          _cardNumberController.clear();
+          _mobileController.clear();
+          _barcodeController.clear();
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Customer added ✅")),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Failed to add customer: $e")),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _lookupCustomerByCardNumber(String cardNumber, {bool showNotFoundSnackbar = true}) async {
+    final trimmed = cardNumber.trim();
+    if (trimmed.isEmpty) return;
+
+    try {
+      final uri = Uri.parse(
+        "$_backendBaseUrl/api/customers/${Uri.encodeComponent(trimmed)}",
+      );
+      final resp = await http.get(uri).timeout(const Duration(seconds: 5));
+      if (resp.statusCode == 404) {
+        if (mounted && showNotFoundSnackbar) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("No customer found for this card")),
+          );
+        }
+        return;
+      }
+      if (resp.statusCode != 200) {
+        throw Exception("HTTP ${resp.statusCode}");
+      }
+
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      final customerMap = (decoded["customer"] as Map).cast<String, dynamic>();
+      final foundCustomer = Customer(
+        name: customerMap["name"] as String,
+        cardNumber: customerMap["cardNumber"] as String,
+        mobile: customerMap["mobile"] as String,
+        points: (customerMap["points"] as num).toInt(),
+      );
+
+      setState(() {
+        _barcodeController.text = foundCustomer.cardNumber;
+        _cardNumberController.text = foundCustomer.cardNumber;
+        _customerNameController.text = foundCustomer.name;
+        _mobileController.text = foundCustomer.mobile;
+
+        final index = customers.indexWhere((c) => c.cardNumber == foundCustomer.cardNumber);
+        if (index == -1) {
+          customers.add(foundCustomer);
+        } else {
+          customers[index] = foundCustomer;
+        }
+        _filteredCustomers = List.from(customers);
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Customer loaded ✅")),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Lookup failed: $e")),
+        );
+      }
+    }
+  }
+  
+  Future<void> _processSale() async {
     if (_units > 0) {
       Product product = products.firstWhere((p) => p.name == _selectedProduct);
       
@@ -252,54 +619,127 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
         _showStockAlert();
         return;
       }
-      
-      // Calculate points based on settings
-      int pointsEarned = 0;
-      if (_selectedProduct == "Petrol") {
-        pointsEarned = _units * pointsSettings['petrol']!;
-      } else if (_selectedProduct == "Diesel") {
-        pointsEarned = _units * pointsSettings['diesel']!;
-      } else {
-        pointsEarned = _units * pointsSettings['oil']!;
-      }
-      
-      // Additional points based on amount
-      pointsEarned += (_totalAmount ~/ pointsSettings['amount']!);
-      
-      // Update stock
-      product.stock -= _units;
-      _stockControllers[_selectedProduct]?.text = product.stock.toString();
-      
-      // Calculate profit
-      double profit = _totalAmount - (_units * _purchasePrice);
-      
-      setState(() {
-        salesRecords.insert(0, SaleRecord(
-          product: _selectedProduct,
-          units: _units,
-          amount: _totalAmount,
-          purchaseCost: _units * _purchasePrice,
-          customer: _selectedCustomer?.name ?? "Walk-in Customer",
-          date: DateTime.now(),
-          pointsEarned: pointsEarned,
-          profit: profit,
-        ));
-        
-        // Update customer points if applicable
-        if (_selectedCustomer != null) {
-          int index = customers.indexWhere((c) => c.cardNumber == _selectedCustomer!.cardNumber);
-          if (index != -1) {
-            customers[index].points += pointsEarned;
-          }
+
+      try {
+        final uri = Uri.parse("$_backendBaseUrl/api/sales");
+        final payload = {
+          "product": _selectedProduct,
+          "units": _units,
+          "amount": _totalAmount,
+          if (_selectedCustomer != null) "customerCardNumber": _selectedCustomer!.cardNumber,
+        };
+        final resp = await http
+            .post(
+              uri,
+              headers: const {"Content-Type": "application/json"},
+              body: jsonEncode(payload),
+            )
+            .timeout(const Duration(seconds: 5));
+
+        if (resp.statusCode != 200) {
+          throw Exception("HTTP ${resp.statusCode}");
         }
-        
-        // Reset form
-        _unitsController.text = "0";
-        _amountController.text = "0.00";
-        _units = 0;
-        _totalAmount = 0.0;
-        _clearCustomerSelection();
-      });
+
+        final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+        final saleMap = (decoded["sale"] as Map).cast<String, dynamic>();
+        final sale = SaleRecord(
+          product: saleMap["product"] as String,
+          units: (saleMap["units"] as num).toInt(),
+          amount: (saleMap["amount"] as num).toDouble(),
+          purchaseCost: (saleMap["purchaseCost"] as num).toDouble(),
+          customer: saleMap["customer"] as String,
+          date: DateTime.parse(saleMap["date"] as String),
+          pointsEarned: (saleMap["pointsEarned"] as num).toInt(),
+          profit: (saleMap["profit"] as num?)?.toDouble(),
+        );
+
+        final productMap = (decoded["product"] as Map).cast<String, dynamic>();
+        final updatedProduct = Product(
+          name: productMap["name"] as String,
+          pricePerUnit: (productMap["pricePerUnit"] as num).toDouble(),
+          unit: (productMap["unit"] as String?) ?? "L",
+          purchasePrice: (productMap["purchasePrice"] as num?)?.toDouble() ?? 0.0,
+          stock: (productMap["stock"] as num).toInt(),
+        );
+
+        final customerMap = decoded["customer"] as Map<String, dynamic>?;
+
+        setState(() {
+          final index = products.indexWhere((p) => p.name == updatedProduct.name);
+          if (index != -1) {
+            products[index] = updatedProduct;
+            _stockControllers[updatedProduct.name]?.text = updatedProduct.stock.toString();
+          }
+
+          if (customerMap != null) {
+            final updatedCustomer = Customer(
+              name: customerMap["name"] as String,
+              cardNumber: customerMap["cardNumber"] as String,
+              mobile: customerMap["mobile"] as String,
+              points: (customerMap["points"] as num).toInt(),
+            );
+            final customerIndex = customers.indexWhere((c) => c.cardNumber == updatedCustomer.cardNumber);
+            if (customerIndex != -1) {
+              customers[customerIndex] = updatedCustomer;
+            }
+          }
+
+          salesRecords.insert(0, sale);
+
+          _unitsController.text = "0";
+          _amountController.text = "0.00";
+          _units = 0;
+          _totalAmount = 0.0;
+          _clearCustomerSelection();
+        });
+      } catch (e) {
+        // Fallback to local-only processing if backend fails
+        int pointsEarned = 0;
+        if (_selectedProduct == "Petrol") {
+          pointsEarned = _units * pointsSettings['petrol']!;
+        } else if (_selectedProduct == "Diesel") {
+          pointsEarned = _units * pointsSettings['diesel']!;
+        } else {
+          pointsEarned = _units * pointsSettings['oil']!;
+        }
+        pointsEarned += (_totalAmount ~/ pointsSettings['amount']!);
+
+        product.stock -= _units;
+        _stockControllers[_selectedProduct]?.text = product.stock.toString();
+        double profit = _totalAmount - (_units * _purchasePrice);
+
+        setState(() {
+          salesRecords.insert(0, SaleRecord(
+            product: _selectedProduct,
+            units: _units,
+            amount: _totalAmount,
+            purchaseCost: _units * _purchasePrice,
+            customer: _selectedCustomer?.name ?? "Walk-in Customer",
+            date: DateTime.now(),
+            pointsEarned: pointsEarned,
+            profit: profit,
+          ));
+
+          if (_selectedCustomer != null) {
+            int index = customers.indexWhere((c) => c.cardNumber == _selectedCustomer!.cardNumber);
+            if (index != -1) {
+              customers[index].points += pointsEarned;
+            }
+          }
+
+          _unitsController.text = "0";
+          _amountController.text = "0.00";
+          _units = 0;
+          _totalAmount = 0.0;
+          _clearCustomerSelection();
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Backend save failed, used local data: $e")),
+          );
+        }
+      }
     }
   }
   
@@ -319,20 +759,57 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     );
   }
   
-  void _savePointsSettings() {
+  Future<void> _savePointsSettings() async {
     setState(() {
       pointsSettings['petrol'] = int.tryParse(_petrolPointsController.text) ?? 1;
       pointsSettings['diesel'] = int.tryParse(_dieselPointsController.text) ?? 1;
       pointsSettings['oil'] = int.tryParse(_oilPointsController.text) ?? 2;
       pointsSettings['amount'] = int.tryParse(_amountPointsController.text) ?? 10;
     });
+
+    try {
+      final uri = Uri.parse("$_backendBaseUrl/api/settings/points");
+      final resp = await http
+          .put(
+            uri,
+            headers: const {"Content-Type": "application/json"},
+            body: jsonEncode({
+              "petrol": pointsSettings['petrol'],
+              "diesel": pointsSettings['diesel'],
+              "oil": pointsSettings['oil'],
+              "amount": pointsSettings['amount'],
+            }),
+          )
+          .timeout(const Duration(seconds: 5));
+
+      if (resp.statusCode != 200) {
+        throw Exception("HTTP ${resp.statusCode}");
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Points settings saved ✅")),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Failed to save points settings: $e")),
+        );
+      }
+    }
   }
   
-  void _saveProductPrices() {
+  Future<void> _saveProductPrices() async {
+    // 1) Apply locally (so UI updates instantly)
     setState(() {
       for (var product in products) {
-        double newPurchasePrice = double.tryParse(_purchasePriceControllers[product.name]?.text ?? "") ?? product.purchasePrice;
-        double newSellingPrice = double.tryParse(_sellingPriceControllers[product.name]?.text ?? "") ?? product.pricePerUnit;
+        final newPurchasePrice =
+            double.tryParse(_purchasePriceControllers[product.name]?.text ?? "") ??
+                product.purchasePrice;
+        final newSellingPrice =
+            double.tryParse(_sellingPriceControllers[product.name]?.text ?? "") ??
+                product.pricePerUnit;
         
         product.purchasePrice = newPurchasePrice;
         product.pricePerUnit = newSellingPrice;
@@ -344,15 +821,80 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
         }
       }
     });
+
+    await _persistProductsToBackend(successMessage: "Prices saved to backend ✅");
   }
   
-  void _saveStockLevels() {
+  Future<void> _saveStockLevels() async {
     setState(() {
       for (var product in products) {
         int newStock = int.tryParse(_stockControllers[product.name]?.text ?? "") ?? product.stock;
         product.stock = newStock;
       }
     });
+
+    await _persistProductsToBackend(successMessage: "Stock levels saved ✅");
+  }
+
+  Future<void> _persistProductsToBackend({required String successMessage}) async {
+    try {
+      final uri = Uri.parse("$_backendBaseUrl/api/products");
+      final payload = {
+        "products": products
+            .map((p) => {
+                  "name": p.name,
+                  "pricePerUnit": p.pricePerUnit,
+                  "unit": p.unit,
+                  "purchasePrice": p.purchasePrice,
+                  "stock": p.stock,
+                })
+            .toList(),
+      };
+
+      final resp = await http
+          .put(
+            uri,
+            headers: const {"Content-Type": "application/json"},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 5));
+
+      if (resp.statusCode != 200) {
+        throw Exception("HTTP ${resp.statusCode}");
+      }
+
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      final productsPayload = (decoded["products"] as List?)?.cast<dynamic>() ?? [];
+      final loadedProducts = productsPayload.map((item) {
+        final map = (item as Map).cast<String, dynamic>();
+        return Product(
+          name: map["name"] as String,
+          pricePerUnit: (map["pricePerUnit"] as num).toDouble(),
+          unit: (map["unit"] as String?) ?? "L",
+          purchasePrice: (map["purchasePrice"] as num?)?.toDouble() ?? 0.0,
+          stock: (map["stock"] as num?)?.toInt() ?? 0,
+        );
+      }).toList();
+
+      if (loadedProducts.isNotEmpty && mounted) {
+        setState(() {
+          products = loadedProducts;
+          _rebuildProductControllers();
+        });
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(successMessage)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Failed to save products: $e")),
+        );
+      }
+    }
   }
   
   Widget _buildProductCard(String productName, double price, String unit) {
@@ -465,7 +1007,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     return _redemptionCart.fold(0, (sum, item) => sum + (item.product.pointsRequired * item.quantity));
   }
   
-  void _redeemCart() {
+  Future<void> _redeemCart() async {
     if (_redemptionCart.isEmpty) {
       _showAlert("Empty Cart", "Please add items to redeem");
       return;
@@ -481,24 +1023,86 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       _showAlert("Insufficient Points", "Customer has ${_selectedCustomer!.points} points but needs $totalPointsNeeded");
       return;
     }
-    
-    // Process redemption
-    setState(() {
-      int customerIndex = customers.indexWhere((c) => c.cardNumber == _selectedCustomer!.cardNumber);
-      if (customerIndex != -1) {
-        customers[customerIndex].points -= totalPointsNeeded;
-        _selectedCustomer!.points -= totalPointsNeeded;
+
+    try {
+      final uri = Uri.parse("$_backendBaseUrl/api/redemptions");
+      final payload = {
+        "customerCardNumber": _selectedCustomer!.cardNumber,
+        "items": _redemptionCart
+            .map((item) => {
+                  "product": item.product.name,
+                  "quantity": item.quantity,
+                })
+            .toList(),
+      };
+      final resp = await http
+          .post(
+            uri,
+            headers: const {"Content-Type": "application/json"},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 5));
+
+      if (resp.statusCode != 200) {
+        throw Exception("HTTP ${resp.statusCode}");
       }
-      
-      // Reduce stock for redeemed products
-      for (var item in _redemptionCart) {
-        item.product.stock -= item.quantity;
-      }
-      
-      _redemptionCart.clear();
-    });
-    
-    _showAlert("Success", "Points redeemed successfully!");
+
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      final customerMap = (decoded["customer"] as Map).cast<String, dynamic>();
+      final updatedCustomer = Customer(
+        name: customerMap["name"] as String,
+        cardNumber: customerMap["cardNumber"] as String,
+        mobile: customerMap["mobile"] as String,
+        points: (customerMap["points"] as num).toInt(),
+      );
+      final productsPayload = (decoded["products"] as List?)?.cast<dynamic>() ?? [];
+      final updatedRedeemables = productsPayload.map((item) {
+        final map = (item as Map).cast<String, dynamic>();
+        return RedeemableProduct(
+          name: map["name"] as String,
+          pointsRequired: (map["pointsRequired"] as num).toInt(),
+          stock: (map["stock"] as num).toInt(),
+        );
+      }).toList();
+
+      setState(() {
+        final customerIndex = customers.indexWhere((c) => c.cardNumber == updatedCustomer.cardNumber);
+        if (customerIndex != -1) {
+          customers[customerIndex] = updatedCustomer;
+          if (_selectedCustomer != null && _selectedCustomer!.cardNumber == updatedCustomer.cardNumber) {
+            _selectedCustomer = updatedCustomer;
+          }
+        }
+
+        for (var updated in updatedRedeemables) {
+          final idx = redeemableProducts.indexWhere((r) => r.name == updated.name);
+          if (idx != -1) {
+            redeemableProducts[idx] = updated;
+          }
+        }
+
+        _redemptionCart.clear();
+      });
+
+      _showAlert("Success", "Points redeemed successfully!");
+    } catch (e) {
+      // Fallback to local-only processing if backend fails
+      setState(() {
+        int customerIndex = customers.indexWhere((c) => c.cardNumber == _selectedCustomer!.cardNumber);
+        if (customerIndex != -1) {
+          customers[customerIndex].points -= totalPointsNeeded;
+          _selectedCustomer!.points -= totalPointsNeeded;
+        }
+
+        for (var item in _redemptionCart) {
+          item.product.stock -= item.quantity;
+        }
+
+        _redemptionCart.clear();
+      });
+
+      _showAlert("Success", "Points redeemed locally (backend error: $e)");
+    }
   }
   
   void _showAlert(String title, String message) {
@@ -690,7 +1294,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                                 prefixIcon: const Icon(Icons.person_search),
                                 suffixIcon: IconButton(
                                   icon: const Icon(Icons.qr_code_scanner),
-                                  onPressed: _simulateBarcodeScan,
+                                  onPressed: _scanBarcode,
                                 ),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
@@ -1320,7 +1924,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                                 ),
                                 const SizedBox(width: 10),
                                 ElevatedButton(
-                                  onPressed: _simulateBarcodeScan,
+                                  onPressed: _scanBarcode,
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: const Color(0xFF1A2E35),
                                     padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -1332,15 +1936,35 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                             
                             const SizedBox(height: 16),
                             
-                            TextField(
-                              controller: _cardNumberController,
-                              decoration: InputDecoration(
-                                labelText: "Card Number",
-                                prefixIcon: const Icon(Icons.credit_card),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: _cardNumberController,
+                                    onSubmitted: (value) =>
+                                        _lookupCustomerByCardNumber(value, showNotFoundSnackbar: true),
+                                    decoration: InputDecoration(
+                                      labelText: "Card Number",
+                                      prefixIcon: const Icon(Icons.credit_card),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                const SizedBox(width: 10),
+                                ElevatedButton(
+                                  onPressed: () => _lookupCustomerByCardNumber(
+                                    _cardNumberController.text,
+                                    showNotFoundSnackbar: true,
+                                  ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF1A2E35),
+                                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                                  ),
+                                  child: const Text("LOOKUP"),
+                                ),
+                              ],
                             ),
                             
                             const SizedBox(height: 16),
@@ -3082,30 +3706,6 @@ Column(
           ),
         ],
       ),
-      
-      // Bottom Navigation
-      bottomNavigationBar: Container(
-        height: 60,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 10,
-              offset: const Offset(0, -2),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _buildNavItem(Icons.local_gas_station, 'Sale', isActive: _mainTabController.index == 0),
-            _buildNavItem(Icons.card_giftcard, 'Loyalty', isActive: _mainTabController.index == 1),
-            _buildNavItem(Icons.bar_chart, 'Reports', isActive: _mainTabController.index == 2),
-            _buildNavItem(Icons.settings, 'Settings', isActive: _mainTabController.index == 3),
-          ],
-        ),
-      ),
     );
   }
   Widget _buildSettingItem(String label, String value) {
@@ -3638,28 +4238,6 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
       case "Diesel": return Colors.blue;
       default: return Colors.green;
     }
-  }
-  
-  Widget _buildNavItem(IconData icon, String label, {bool isActive = false}) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(
-          icon,
-          color: isActive ? const Color(0xFF1A2E35) : const Color(0xFF999999),
-          size: 24,
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: isActive ? const Color(0xFF1A2E35) : const Color(0xFF999999),
-            fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-          ),
-        ),
-      ],
-    );
   }
 }
 

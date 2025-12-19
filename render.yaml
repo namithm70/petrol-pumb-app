@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: bpclpos-backend
+    env: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node src/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bpclpos-postgres
+          property: connectionString
+databases:
+  - name: bpclpos-postgres
+    plan: free

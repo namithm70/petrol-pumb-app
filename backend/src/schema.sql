@@ -1,0 +1,54 @@
+CREATE TABLE IF NOT EXISTS products (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  price_per_unit NUMERIC(12, 2) NOT NULL,
+  unit TEXT NOT NULL DEFAULT 'L',
+  purchase_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  stock INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS customers (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  card_number TEXT NOT NULL UNIQUE,
+  mobile TEXT NOT NULL,
+  points INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS redeemable_products (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  points_required INTEGER NOT NULL,
+  stock INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sales (
+  id SERIAL PRIMARY KEY,
+  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+  customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+  units INTEGER NOT NULL,
+  amount NUMERIC(12, 2) NOT NULL,
+  purchase_cost NUMERIC(12, 2) NOT NULL,
+  profit NUMERIC(12, 2) NOT NULL,
+  points_earned INTEGER NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS redemptions (
+  id SERIAL PRIMARY KEY,
+  customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  points_spent INTEGER NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS redemption_items (
+  id SERIAL PRIMARY KEY,
+  redemption_id INTEGER NOT NULL REFERENCES redemptions(id) ON DELETE CASCADE,
+  redeemable_product_id INTEGER NOT NULL REFERENCES redeemable_products(id) ON DELETE RESTRICT,
+  quantity INTEGER NOT NULL
+);

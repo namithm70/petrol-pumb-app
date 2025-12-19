@@ -1,0 +1,46 @@
+INSERT INTO products (name, price_per_unit, unit, purchase_price, stock) VALUES
+  ('Petrol', 100.00, 'L', 90.00, 5000),
+  ('Diesel', 90.00, 'L', 80.00, 4000),
+  ('Engine Oil', 500.00, 'L', 400.00, 200),
+  ('Gear Oil', 450.00, 'L', 350.00, 150),
+  ('Brake Oil', 300.00, 'L', 250.00, 100),
+  ('Coolant', 250.00, 'L', 200.00, 80)
+ON CONFLICT (name) DO UPDATE SET
+  price_per_unit = EXCLUDED.price_per_unit,
+  unit = EXCLUDED.unit,
+  purchase_price = EXCLUDED.purchase_price,
+  stock = EXCLUDED.stock;
+
+INSERT INTO customers (name, card_number, mobile, points) VALUES
+  ('Rajesh Kumar', 'BPCL12345678', '9876543210', 1250),
+  ('Priya Sharma', 'BPCL87654321', '8765432109', 850),
+  ('Amit Patel', 'BPCL98765432', '7654321098', 2100),
+  ('Sneha Reddy', 'BPCL45678901', '6543210987', 450),
+  ('Vikram Singh', 'BPCL23456789', '9432109876', 1800)
+ON CONFLICT (card_number) DO UPDATE SET
+  name = EXCLUDED.name,
+  mobile = EXCLUDED.mobile,
+  points = EXCLUDED.points;
+
+INSERT INTO redeemable_products (name, points_required, stock) VALUES
+  ('Coffee 500g', 250, 30),
+  ('Tea Bag 100pcs', 150, 50),
+  ('Energy Drink', 100, 40),
+  ('Snack Pack', 80, 60),
+  ('Water Bottle', 120, 25),
+  ('Air Freshener', 90, 35),
+  ('Premium Pen Set', 200, 20),
+  ('Charger Cable', 300, 15),
+  ('Phone Stand', 180, 10),
+  ('Sunscreen 100ml', 220, 12)
+ON CONFLICT (name) DO UPDATE SET
+  points_required = EXCLUDED.points_required,
+  stock = EXCLUDED.stock;
+
+INSERT INTO settings (key, value) VALUES
+  ('petrol', 1),
+  ('diesel', 1),
+  ('oil', 2),
+  ('amount', 10)
+ON CONFLICT (key) DO UPDATE SET
+  value = EXCLUDED.value;
