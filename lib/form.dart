@@ -73,37 +73,14 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   ];
   
   // Redeemable products (Grocery & Trending)
-  List<RedeemableProduct> redeemableProducts = [
-    RedeemableProduct(name: "Coffee 500g", pointsRequired: 250, stock: 30),
-    RedeemableProduct(name: "Tea Bag 100pcs", pointsRequired: 150, stock: 50),
-    RedeemableProduct(name: "Energy Drink", pointsRequired: 100, stock: 40),
-    RedeemableProduct(name: "Snack Pack", pointsRequired: 80, stock: 60),
-    RedeemableProduct(name: "Water Bottle", pointsRequired: 120, stock: 25),
-    RedeemableProduct(name: "Air Freshener", pointsRequired: 90, stock: 35),
-    RedeemableProduct(name: "Premium Pen Set", pointsRequired: 200, stock: 20),
-    RedeemableProduct(name: "Charger Cable", pointsRequired: 300, stock: 15),
-    RedeemableProduct(name: "Phone Stand", pointsRequired: 180, stock: 10),
-    RedeemableProduct(name: "Sunscreen 100ml", pointsRequired: 220, stock: 12),
-  ];
+  List<RedeemableProduct> redeemableProducts = [];
   
   // Push notifications messages
   List<PushNotificationMessage> pushNotifications = [];
   
-  List<Customer> customers = [
-    Customer(name: "Rajesh Kumar", cardNumber: "BPCL12345678", mobile: "9876543210", points: 1250),
-    Customer(name: "Priya Sharma", cardNumber: "BPCL87654321", mobile: "8765432109", points: 850),
-    Customer(name: "Amit Patel", cardNumber: "BPCL98765432", mobile: "7654321098", points: 2100),
-    Customer(name: "Sneha Reddy", cardNumber: "BPCL45678901", mobile: "6543210987", points: 450),
-    Customer(name: "Vikram Singh", cardNumber: "BPCL23456789", mobile: "9432109876", points: 1800),
-  ];
+  List<Customer> customers = [];
   
-  List<SaleRecord> salesRecords = [
-    SaleRecord(product: "Petrol", units: 10, amount: 1000, purchaseCost: 900, customer: "Rajesh Kumar", date: DateTime.now().subtract(Duration(days: 1)), pointsEarned: 10),
-    SaleRecord(product: "Diesel", units: 15, amount: 1350, purchaseCost: 1200, customer: "Priya Sharma", date: DateTime.now().subtract(Duration(days: 2)), pointsEarned: 15),
-    SaleRecord(product: "Engine Oil", units: 2, amount: 1000, purchaseCost: 800, customer: "Amit Patel", date: DateTime.now().subtract(Duration(days: 3)), pointsEarned: 4),
-    SaleRecord(product: "Petrol", units: 5, amount: 500, purchaseCost: 450, customer: "Rajesh Kumar", date: DateTime.now().subtract(Duration(days: 4)), pointsEarned: 5),
-    SaleRecord(product: "Diesel", units: 8, amount: 720, purchaseCost: 640, customer: "Priya Sharma", date: DateTime.now().subtract(Duration(days: 5)), pointsEarned: 8),
-  ];
+  List<SaleRecord> salesRecords = [];
   
   // Points settings
   Map<String, int> pointsSettings = {
@@ -2159,160 +2136,203 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                         controller: _reportsTabController,
                         children: [
                           // Sales Report
-                          ListView.builder(
-                            padding: const EdgeInsets.all(20),
-                            itemCount: salesRecords.length,
-                            itemBuilder: (context, index) {
-                              return _buildSaleRecordCard(salesRecords[index]);
-                            },
-                          ),
+                          salesRecords.isEmpty
+                              ? const Center(
+                                  child: Text(
+                                    "No sales data yet.",
+                                    style: TextStyle(color: Color(0xFF666666)),
+                                  ),
+                                )
+                              : ListView.builder(
+                                  padding: const EdgeInsets.all(20),
+                                  itemCount: salesRecords.length,
+                                  itemBuilder: (context, index) {
+                                    return _buildSaleRecordCard(salesRecords[index]);
+                                  },
+                                ),
                           
                           // Profit Report
-                          SingleChildScrollView(
-                            padding: const EdgeInsets.all(20),
-                            child: Column(
-                              children: [
-                                // Profit Summary Cards
-                                GridView.count(
-                                  shrinkWrap: true,
-                                  physics: const NeverScrollableScrollPhysics(),
-                                  crossAxisCount: 2,
-                                  childAspectRatio: 1.2,
-                                  crossAxisSpacing: 16,
-                                  mainAxisSpacing: 16,
-                                  children: [
-                                    _buildProfitCard(
-                                      "Today's Profit",
-                                      _todayProfit,
-                                      Colors.green,
-                                      Icons.today,
-                                    ),
-                                    _buildProfitCard(
-                                      "Total Profit",
-                                      _totalProfit,
-                                      Colors.blue,
-                                      Icons.attach_money,
-                                    ),
-                                    _buildProfitCard(
-                                      "Total Sales",
-                                      salesRecords.fold(0.0, (sum, record) => sum + record.amount),
-                                      Colors.orange,
-                                      Icons.shopping_cart,
-                                    ),
-                                    _buildProfitCard(
-                                      "Total Units Sold",
-                                      salesRecords.fold(0, (sum, record) => sum + record.units).toDouble(),
-                                      Colors.purple,
-                                      Icons.format_list_numbered,
-                                    ),
-                                  ],
-                                ),
-                                
-                                const SizedBox(height: 20),
-                                
-                                // Profit by Product
-                                Container(
-                                  padding: const EdgeInsets.all(20),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(16),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.05),
-                                        blurRadius: 10,
-                                        offset: const Offset(0, 4),
-                                      ),
-                                    ],
+                          salesRecords.isEmpty
+                              ? const Center(
+                                  child: Text(
+                                    "No profit data yet.",
+                                    style: TextStyle(color: Color(0xFF666666)),
                                   ),
+                                )
+                              : SingleChildScrollView(
+                                  padding: const EdgeInsets.all(20),
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      const Text(
-                                        "Profit by Product",
-                                        style: TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.bold,
-                                          color: Color(0xFF1A2E35),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 16),
-                                      
-                                      ...products.map((product) {
-                                        double productProfit = salesRecords
-                                          .where((record) => record.product == product.name)
-                                          .fold(0.0, (sum, record) => sum + (record.profit ?? 0));
-                                        
-                                        return Padding(
-                                          padding: const EdgeInsets.only(bottom: 12),
-                                          child: Row(
-                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              Expanded(
-                                                child: Text(
-                                                  product.name,
-                                                  style: const TextStyle(fontWeight: FontWeight.w500),
-                                                ),
-                                              ),
-                                              Text(
-                                                "₹${productProfit.toStringAsFixed(2)}",
-                                                style: TextStyle(
-                                                  color: productProfit >= 0 ? Colors.green : Colors.red,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            ],
+                                      // Profit Summary Cards
+                                      GridView.count(
+                                        shrinkWrap: true,
+                                        physics: const NeverScrollableScrollPhysics(),
+                                        crossAxisCount: 2,
+                                        childAspectRatio: 1.2,
+                                        crossAxisSpacing: 16,
+                                        mainAxisSpacing: 16,
+                                        children: [
+                                          _buildProfitCard(
+                                            "Today's Profit",
+                                            _todayProfit,
+                                            Colors.green,
+                                            Icons.today,
                                           ),
-                                        );
-                                      }).toList(),
-                                    ],
-                                  ),
-                                ),
-                                
-                                const SizedBox(height: 20),
-                                
-                                // Recent Profitable Sales
-                                Container(
-                                  padding: const EdgeInsets.all(20),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(16),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.05),
-                                        blurRadius: 10,
-                                        offset: const Offset(0, 4),
+                                          _buildProfitCard(
+                                            "Total Profit",
+                                            _totalProfit,
+                                            Colors.blue,
+                                            Icons.attach_money,
+                                          ),
+                                          _buildProfitCard(
+                                            "Total Sales",
+                                            salesRecords.fold(0.0, (sum, record) => sum + record.amount),
+                                            Colors.orange,
+                                            Icons.shopping_cart,
+                                          ),
+                                          _buildProfitCard(
+                                            "Total Units Sold",
+                                            salesRecords.fold(0, (sum, record) => sum + record.units).toDouble(),
+                                            Colors.purple,
+                                            Icons.format_list_numbered,
+                                          ),
+                                        ],
                                       ),
-                                    ],
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        "Recent Profitable Sales",
-                                        style: TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.bold,
-                                          color: Color(0xFF1A2E35),
+                                      
+                                      const SizedBox(height: 20),
+                                      
+                                      // Profit by Product
+                                      Container(
+                                        padding: const EdgeInsets.all(20),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius: BorderRadius.circular(16),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black.withOpacity(0.05),
+                                              blurRadius: 10,
+                                              offset: const Offset(0, 4),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            const Text(
+                                              "Profit by Product",
+                                              style: TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFF1A2E35),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 16),
+                                            
+                                            ...products.map((product) {
+                                              double productProfit = salesRecords
+                                                .where((record) => record.product == product.name)
+                                                .fold(0.0, (sum, record) => sum + (record.profit ?? 0));
+                                              
+                                              return Padding(
+                                                padding: const EdgeInsets.only(bottom: 12),
+                                                child: Row(
+                                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                  children: [
+                                                    Expanded(
+                                                      child: Text(
+                                                        product.name,
+                                                        style: const TextStyle(fontWeight: FontWeight.w500),
+                                                      ),
+                                                    ),
+                                                    Text(
+                                                      "₹${productProfit.toStringAsFixed(2)}",
+                                                      style: TextStyle(
+                                                        color: productProfit >= 0 ? Colors.green : Colors.red,
+                                                        fontWeight: FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                            }).toList(),
+                                          ],
                                         ),
                                       ),
-                                      const SizedBox(height: 16),
                                       
-                                      ...salesRecords.take(5).map((record) => _buildProfitRecordCard(record)).toList(),
+                                      const SizedBox(height: 20),
+                                      
+                                      // Recent Profitable Sales
+                                      Container(
+                                        padding: const EdgeInsets.all(20),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius: BorderRadius.circular(16),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black.withOpacity(0.05),
+                                              blurRadius: 10,
+                                              offset: const Offset(0, 4),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            const Text(
+                                              "Recent Profitable Sales",
+                                              style: TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFF1A2E35),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 16),
+                                            
+                                            ...salesRecords.take(5).map((record) => _buildProfitRecordCard(record)).toList(),
+                                          ],
+                                        ),
+                                      ),
                                     ],
                                   ),
                                 ),
-                              ],
-                            ),
-                          ),
                           
                           // Stock Report
-                          ListView.builder(
-                            padding: const EdgeInsets.all(20),
-                            itemCount: products.length,
-                            itemBuilder: (context, index) {
-                              return _buildStockCard(products[index]);
-                            },
-                          ),
+                          products.isEmpty
+                              ? const Center(
+                                  child: Text(
+                                    "No stock data yet.",
+                                    style: TextStyle(color: Color(0xFF666666)),
+                                  ),
+                                )
+                              : ListView.builder(
+                                  padding: const EdgeInsets.all(20),
+                                  itemCount: products.length,
+                                  itemBuilder: (context, index) {
+                                    return _buildStockCard(products[index]);
+                                  },
+                                ),
+                          
+                          // Loyalty Report
+                          customers.isEmpty
+                              ? const Center(
+                                  child: Text(
+                                    "No loyalty data yet.",
+                                    style: TextStyle(color: Color(0xFF666666)),
+                                  ),
+                                )
+                              : Builder(
+                                  builder: (context) {
+                                    final sortedCustomers = [...customers]
+                                      ..sort((a, b) => b.points.compareTo(a.points));
+                                    return ListView.builder(
+                                      padding: const EdgeInsets.all(20),
+                                      itemCount: sortedCustomers.length,
+                                      itemBuilder: (context, index) {
+                                        return _buildCustomerCard(sortedCustomers[index]);
+                                      },
+                                    );
+                                  },
+                                ),
                         ],
                       ),
                     ),
