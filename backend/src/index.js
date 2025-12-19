@@ -10,9 +10,8 @@ const port = process.env.PORT ? Number(process.env.PORT) : 3001;
 app.use(cors());
 app.use(express.json());
 
-const CARD_NUMBER_PATTERN = /^[A-Z0-9-]+$/;
-const CARD_NUMBER_MIN = 3;
-const CARD_NUMBER_MAX = 64;
+const CARD_NUMBER_MIN = 1;
+const CARD_NUMBER_MAX = 128;
 
 function mapProductRow(row) {
   return {
@@ -59,12 +58,9 @@ function normalizeCardNumber(input) {
   if (typeof input !== 'string') {
     throw new Error('cardNumber must be a string');
   }
-  const trimmed = input.trim().toUpperCase();
+  const trimmed = input.trim();
   if (trimmed.length < CARD_NUMBER_MIN || trimmed.length > CARD_NUMBER_MAX) {
     throw new Error(`cardNumber must be ${CARD_NUMBER_MIN}-${CARD_NUMBER_MAX} characters`);
-  }
-  if (!CARD_NUMBER_PATTERN.test(trimmed)) {
-    throw new Error('cardNumber must be alphanumeric');
   }
   return trimmed;
 }

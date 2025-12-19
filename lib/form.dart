@@ -190,7 +190,15 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       final uri = Uri.parse("$_backendBaseUrl/api/products");
       final resp = await http.get(uri).timeout(const Duration(seconds: 5));
       if (resp.statusCode != 200) {
-        throw Exception("HTTP ${resp.statusCode}");
+        String detail = "HTTP ${resp.statusCode}";
+        try {
+          final decodedError = jsonDecode(resp.body) as Map<String, dynamic>;
+          final errorMessage = decodedError["error"] as String?;
+          if (errorMessage != null && errorMessage.isNotEmpty) {
+            detail = errorMessage;
+          }
+        } catch (_) {}
+        throw Exception(detail);
       }
 
       final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
