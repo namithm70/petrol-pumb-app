@@ -285,11 +285,14 @@ app.post('/api/customers', async (req, res) => {
 });
 
 app.get('/api/customers', async (req, res) => {
-  const { cardNumber, barcode } = req.query || {};
-  if (!cardNumber && !barcode) {
-    return res.status(400).json({ error: 'cardNumber or barcode query param is required' });
-  }
   try {
+    const { cardNumber, barcode } = req.query || {};
+    if (!cardNumber && !barcode) {
+      const { rows } = await db.query(
+        'SELECT name, card_number, barcode, mobile, points FROM customers ORDER BY name'
+      );
+      return res.json({ customers: rows.map(mapCustomerRow) });
+    }
     let rows = [];
     if (cardNumber) {
       const normalizedCard = normalizeCardNumber(String(cardNumber));
@@ -570,6 +573,58 @@ app.post('/api/redemptions', async (req, res) => {
     await client.query('ROLLBACK');
     console.error('POST /api/redemptions failed:', err);
     res.status(400).json({ error: err.message || 'Failed to redeem points' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/redeemables', async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT name, points_required, stock FROM redeemable_products ORDER BY name'
+    );
+    res.json({ redeemables: rows.map(mapRedeemableRow) });
+  } catch (err) {
+    console.error('GET /api/redeemables failed:', err);
+    res.status(500).json({ error: 'Failed to load redeemables' });
+  }
+});
+
+app.put('/api/redeemables', async (req, res) => {
+  const payload = req.body?.redeemables;
+  if (!Array.isArray(payload)) {
+    return res.status(400).json({ error: 'redeemables must be an array' });
+  }
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const item of payload) {
+      if (!item?.name) {
+        throw new Error('Redeemable name is required');
+      }
+      await client.query(
+        `INSERT INTO redeemable_products (name, points_required, stock)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (name) DO UPDATE SET
+           points_required = EXCLUDED.points_required,
+           stock = EXCLUDED.stock`,
+        [
+          item.name,
+          Number(item.pointsRequired ?? item.points_required ?? 0),
+          Number(item.stock ?? 0),
+        ]
+      );
+    }
+    const { rows } = await client.query(
+      'SELECT name, points_required, stock FROM redeemable_products ORDER BY name'
+    );
+    await client.query('COMMIT');
+    res.json({ redeemables: rows.map(mapRedeemableRow) });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('PUT /api/redeemables failed:', err);
+    res.status(400).json({ error: err.message || 'Failed to save redeemables' });
   } finally {
     client.release();
   }

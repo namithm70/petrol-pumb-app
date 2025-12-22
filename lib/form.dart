@@ -47,9 +47,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   final Map<String, TextEditingController> _stockControllers = {};
   
   // State variables
-  String _selectedProduct = "";
-  double _pricePerUnit = 0.0;
-  double _purchasePrice = 0.0;
+  String _selectedProduct = "Petrol";
+  double _pricePerUnit = 100.0;
+  double _purchasePrice = 90.0;
   double _totalAmount = 0.0;
   int _units = 0;
   Customer? _selectedCustomer;
@@ -65,17 +65,47 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   bool _bootstrapInProgress = false;
   String? _bootstrapError;
   
-  List<Product> products = [];
+  List<Product> products = [
+    Product(name: "Petrol", pricePerUnit: 100.0, unit: "L", purchasePrice: 90.0, stock: 5000),
+    Product(name: "Diesel", pricePerUnit: 90.0, unit: "L", purchasePrice: 80.0, stock: 4000),
+    Product(name: "Engine Oil", pricePerUnit: 500.0, unit: "L", purchasePrice: 400.0, stock: 200),
+    Product(name: "Gear Oil", pricePerUnit: 450.0, unit: "L", purchasePrice: 350.0, stock: 150),
+    Product(name: "Brake Oil", pricePerUnit: 300.0, unit: "L", purchasePrice: 250.0, stock: 100),
+    Product(name: "Coolant", pricePerUnit: 250.0, unit: "L", purchasePrice: 200.0, stock: 80),
+  ];
   
   // Redeemable products (Grocery & Trending)
-  List<RedeemableProduct> redeemableProducts = [];
+  List<RedeemableProduct> redeemableProducts = [
+    RedeemableProduct(name: "Coffee 500g", pointsRequired: 250, stock: 30),
+    RedeemableProduct(name: "Tea Bag 100pcs", pointsRequired: 150, stock: 50),
+    RedeemableProduct(name: "Energy Drink", pointsRequired: 100, stock: 40),
+    RedeemableProduct(name: "Snack Pack", pointsRequired: 80, stock: 60),
+    RedeemableProduct(name: "Water Bottle", pointsRequired: 120, stock: 25),
+    RedeemableProduct(name: "Air Freshener", pointsRequired: 90, stock: 35),
+    RedeemableProduct(name: "Premium Pen Set", pointsRequired: 200, stock: 20),
+    RedeemableProduct(name: "Charger Cable", pointsRequired: 300, stock: 15),
+    RedeemableProduct(name: "Phone Stand", pointsRequired: 180, stock: 10),
+    RedeemableProduct(name: "Sunscreen 100ml", pointsRequired: 220, stock: 12),
+  ];
   
   // Push notifications messages
   List<PushNotificationMessage> pushNotifications = [];
   
-  List<Customer> customers = [];
+  List<Customer> customers = [
+    Customer(name: "Rajesh Kumar", cardNumber: "BPCL12345678", barcode: "BPCL12345678", mobile: "9876543210", points: 1250),
+    Customer(name: "Priya Sharma", cardNumber: "BPCL87654321", barcode: "BPCL87654321", mobile: "8765432109", points: 850),
+    Customer(name: "Amit Patel", cardNumber: "BPCL98765432", barcode: "BPCL98765432", mobile: "7654321098", points: 2100),
+    Customer(name: "Sneha Reddy", cardNumber: "BPCL45678901", barcode: "BPCL45678901", mobile: "6543210987", points: 450),
+    Customer(name: "Vikram Singh", cardNumber: "BPCL23456789", barcode: "BPCL23456789", mobile: "9432109876", points: 1800),
+  ];
   
-  List<SaleRecord> salesRecords = [];
+  List<SaleRecord> salesRecords = [
+    SaleRecord(product: "Petrol", units: 10, amount: 1000, purchaseCost: 900, customer: "Rajesh Kumar", date: DateTime.now().subtract(Duration(days: 1)), pointsEarned: 10),
+    SaleRecord(product: "Diesel", units: 15, amount: 1350, purchaseCost: 1200, customer: "Priya Sharma", date: DateTime.now().subtract(Duration(days: 2)), pointsEarned: 15),
+    SaleRecord(product: "Engine Oil", units: 2, amount: 1000, purchaseCost: 800, customer: "Amit Patel", date: DateTime.now().subtract(Duration(days: 3)), pointsEarned: 4),
+    SaleRecord(product: "Petrol", units: 5, amount: 500, purchaseCost: 450, customer: "Rajesh Kumar", date: DateTime.now().subtract(Duration(days: 4)), pointsEarned: 5),
+    SaleRecord(product: "Diesel", units: 8, amount: 720, purchaseCost: 640, customer: "Priya Sharma", date: DateTime.now().subtract(Duration(days: 5)), pointsEarned: 8),
+  ];
   
   // Points settings
   Map<String, int> pointsSettings = {
@@ -109,6 +139,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
 
     // Initial data load from backend
     unawaited(_loadBootstrapFromBackend(showErrorSnackbar: false));
+    unawaited(_refreshCustomersFromBackend());
 
     // Auto-sync latest prices from backend
     unawaited(_syncPricesFromBackend(showErrorSnackbar: false));
@@ -570,6 +601,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
           _mobileController.clear();
           _barcodeController.clear();
         });
+        unawaited(_refreshCustomersFromBackend());
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -588,6 +620,35 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
         const SnackBar(content: Text("Name and card number are required")),
       );
     }
+  }
+
+  Future<void> _refreshCustomersFromBackend() async {
+    try {
+      final uri = Uri.parse("$_backendBaseUrl/api/customers");
+      final resp = await http.get(uri).timeout(const Duration(seconds: 5));
+      if (resp.statusCode != 200) {
+        return;
+      }
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      final customersPayload = (decoded["customers"] as List?)?.cast<dynamic>() ?? [];
+      final loadedCustomers = customersPayload.map((item) {
+        final map = (item as Map).cast<String, dynamic>();
+        return Customer(
+          name: map["name"] as String,
+          cardNumber: map["cardNumber"] as String,
+          barcode: map["barcode"] as String?,
+          mobile: map["mobile"] as String,
+          points: (map["points"] as num).toInt(),
+        );
+      }).toList();
+
+      if (loadedCustomers.isNotEmpty && mounted) {
+        setState(() {
+          customers = loadedCustomers;
+          _filteredCustomers = List.from(customers);
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _lookupCustomerByCardNumber(String cardNumber, {bool showNotFoundSnackbar = true}) async {
@@ -2951,288 +3012,323 @@ Column(
                       ),
                       const SizedBox(height: 20),
                       
-                      // Price Settings Table
-                      Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFFEEEEEE)),
-                        ),
-                        child: Column(
-                          children: [
-                            // Table Header
-                            Container(
-                              padding: const EdgeInsets.all(16),
-                              decoration: const BoxDecoration(
-                                color: Color(0xFFF8F9FA),
-                                borderRadius: BorderRadius.only(
-                                  topLeft: Radius.circular(12),
-                                  topRight: Radius.circular(12),
+                      if (products.isEmpty)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFEEEEEE)),
+                          ),
+                          child: Column(
+                            children: [
+                              Text(
+                                _bootstrapInProgress
+                                    ? "Loading products..."
+                                    : "No products available.",
+                                style: const TextStyle(color: Color(0xFF666666)),
+                              ),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                height: 40,
+                                child: ElevatedButton(
+                                  onPressed: _bootstrapInProgress
+                                      ? null
+                                      : () => _loadBootstrapFromBackend(showErrorSnackbar: true),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF1A2E35),
+                                  ),
+                                  child: const Text("Retry"),
                                 ),
                               ),
-                              child: const Row(
-                                children: [
-                                  Expanded(
-                                    flex: 2,
-                                    child: Text(
-                                      "Product",
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Color(0xFF1A2E35),
-                                      ),
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: Text(
-                                      "Purchase (₹)",
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Color(0xFF1A2E35),
-                                      ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: Text(
-                                      "Selling (₹)",
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Color(0xFF1A2E35),
-                                      ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: Text(
-                                      "Margin %",
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Color(0xFF1A2E35),
-                                      ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            
-                            // Product Rows
-                            ...products.map((product) {
-                              double margin = ((product.pricePerUnit - product.purchasePrice) / product.purchasePrice * 100);
-                              return Container(
+                            ],
+                          ),
+                        )
+                      else ...[
+                        // Price Settings Table
+                        Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFEEEEEE)),
+                          ),
+                          child: Column(
+                            children: [
+                              // Table Header
+                              Container(
                                 padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  border: Border(
-                                    top: BorderSide(
-                                      color: const Color(0xFFEEEEEE),
-                                      width: product == products.first ? 0 : 1,
-                                    ),
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFFF8F9FA),
+                                  borderRadius: BorderRadius.only(
+                                    topLeft: Radius.circular(12),
+                                    topRight: Radius.circular(12),
                                   ),
                                 ),
-                                child: Row(
+                                child: const Row(
                                   children: [
                                     Expanded(
                                       flex: 2,
-                                      child: Row(
-                                        children: [
-                                          Container(
-                                            width: 36,
-                                            height: 36,
-                                            decoration: BoxDecoration(
-                                              color: _getProductColor(product.name).withOpacity(0.1),
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                            child: Icon(
-                                              _getProductIcon(product.name),
-                                              color: _getProductColor(product.name),
-                                              size: 18,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  product.name,
-                                                  style: const TextStyle(
-                                                    fontWeight: FontWeight.w600,
-                                                    fontSize: 14,
-                                                  ),
-                                                ),
-                                                Text(
-                                                  "Stock: ${product.stock}",
-                                                  style: const TextStyle(
-                                                    fontSize: 12,
-                                                    color: Color(0xFF666666),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    Expanded(
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                                        child: TextField(
-                                          controller: _purchasePriceControllers[product.name],
-                                          keyboardType: TextInputType.number,
-                                          textAlign: TextAlign.center,
-                                          decoration: InputDecoration(
-                                            border: OutlineInputBorder(
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                            contentPadding: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 8,
-                                            ),
-                                          ),
-                                          style: const TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    Expanded(
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                                        child: TextField(
-                                          controller: _sellingPriceControllers[product.name],
-                                          keyboardType: TextInputType.number,
-                                          textAlign: TextAlign.center,
-                                          decoration: InputDecoration(
-                                            border: OutlineInputBorder(
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                            contentPadding: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 8,
-                                            ),
-                                          ),
-                                          style: const TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w500,
-                                          ),
+                                      child: Text(
+                                        "Product",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF1A2E35),
                                         ),
                                       ),
                                     ),
                                     Expanded(
                                       child: Text(
-                                        "${margin.toStringAsFixed(1)}%",
-                                        textAlign: TextAlign.center,
+                                        "Purchase (₹)",
                                         style: TextStyle(
-                                          fontSize: 14,
                                           fontWeight: FontWeight.bold,
-                                          color: margin >= 0 ? Colors.green : Colors.red,
+                                          color: Color(0xFF1A2E35),
                                         ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        "Selling (₹)",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF1A2E35),
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        "Margin %",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF1A2E35),
+                                        ),
+                                        textAlign: TextAlign.center,
                                       ),
                                     ),
                                   ],
                                 ),
-                              );
-                            }).toList(),
-                          ],
-                        ),
-                      ),
-                      
-                      const SizedBox(height: 20),
-                      
-                      // Quick Actions
-                      GridView.count(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        crossAxisCount: 2,
-                        childAspectRatio: 3,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                        children: [
-                          _buildQuickActionButton(
-                            "Apply 5% Increase",
-                            Icons.trending_up,
-                            Colors.green,
-                            () {
-                              for (var product in products) {
-                                double current = product.pricePerUnit;
-                                double newPrice = current * 1.05;
-                                _sellingPriceControllers[product.name]?.text = newPrice.toStringAsFixed(2);
-                              }
-                              setState(() {});
-                            },
-                          ),
-                          _buildQuickActionButton(
-                            "Apply 3% Decrease",
-                            Icons.trending_down,
-                            Colors.orange,
-                            () {
-                              for (var product in products) {
-                                double current = product.pricePerUnit;
-                                double newPrice = current * 0.97;
-                                _sellingPriceControllers[product.name]?.text = newPrice.toStringAsFixed(2);
-                              }
-                              setState(() {});
-                            },
-                          ),
-                          _buildQuickActionButton(
-                            "Copy Purchase to Selling",
-                            Icons.copy,
-                            Colors.blue,
-                            () {
-                              for (var product in products) {
-                                double purchase = product.purchasePrice;
-                                _sellingPriceControllers[product.name]?.text = (purchase * 1.1).toStringAsFixed(2);
-                              }
-                              setState(() {});
-                            },
-                          ),
-                          _buildQuickActionButton(
-                            "Reset to Default",
-                            Icons.restart_alt,
-                            Colors.red,
-                            () {
-                              for (var product in products) {
-                                _sellingPriceControllers[product.name]?.text = product.pricePerUnit.toStringAsFixed(2);
-                                _purchasePriceControllers[product.name]?.text = product.purchasePrice.toStringAsFixed(2);
-                              }
-                              setState(() {});
-                            },
-                          ),
-                        ],
-                      ),
-                      
-                      const SizedBox(height: 30),
-                      
-                      // Save Button
-                      SizedBox(
-                        width: double.infinity,
-                        height: 54,
-                        child: ElevatedButton(
-                          onPressed: _saveProductPrices,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue.shade700,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            elevation: 4,
-                          ),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.save, size: 22),
-                              SizedBox(width: 10),
-                              Text(
-                                "SAVE PRICE SETTINGS",
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
                               ),
+                              
+                              // Product Rows
+                              ...products.map((product) {
+                                double margin = ((product.pricePerUnit - product.purchasePrice) / product.purchasePrice * 100);
+                                return Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    border: Border(
+                                      top: BorderSide(
+                                        color: const Color(0xFFEEEEEE),
+                                        width: product == products.first ? 0 : 1,
+                                      ),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        flex: 2,
+                                        child: Row(
+                                          children: [
+                                            Container(
+                                              width: 36,
+                                              height: 36,
+                                              decoration: BoxDecoration(
+                                                color: _getProductColor(product.name).withOpacity(0.1),
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                              child: Icon(
+                                                _getProductIcon(product.name),
+                                                color: _getProductColor(product.name),
+                                                size: 18,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    product.name,
+                                                    style: const TextStyle(
+                                                      fontWeight: FontWeight.w600,
+                                                      fontSize: 14,
+                                                    ),
+                                                  ),
+                                                  Text(
+                                                    "Stock: ${product.stock}",
+                                                    style: const TextStyle(
+                                                      fontSize: 12,
+                                                      color: Color(0xFF666666),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                                          child: TextField(
+                                            controller: _purchasePriceControllers[product.name],
+                                            keyboardType: TextInputType.number,
+                                            textAlign: TextAlign.center,
+                                            decoration: InputDecoration(
+                                              border: OutlineInputBorder(
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                              contentPadding: const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 8,
+                                              ),
+                                            ),
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                                          child: TextField(
+                                            controller: _sellingPriceControllers[product.name],
+                                            keyboardType: TextInputType.number,
+                                            textAlign: TextAlign.center,
+                                            decoration: InputDecoration(
+                                              border: OutlineInputBorder(
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                              contentPadding: const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 8,
+                                              ),
+                                            ),
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          "${margin.toStringAsFixed(1)}%",
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                            color: margin >= 0 ? Colors.green : Colors.red,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
                             ],
                           ),
                         ),
-                      ),
+                        
+                        const SizedBox(height: 20),
+                        
+                        // Quick Actions
+                        GridView.count(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          crossAxisCount: 2,
+                          childAspectRatio: 3,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          children: [
+                            _buildQuickActionButton(
+                              "Apply 5% Increase",
+                              Icons.trending_up,
+                              Colors.green,
+                              () {
+                                for (var product in products) {
+                                  double current = product.pricePerUnit;
+                                  double newPrice = current * 1.05;
+                                  _sellingPriceControllers[product.name]?.text = newPrice.toStringAsFixed(2);
+                                }
+                                setState(() {});
+                              },
+                            ),
+                            _buildQuickActionButton(
+                              "Apply 3% Decrease",
+                              Icons.trending_down,
+                              Colors.orange,
+                              () {
+                                for (var product in products) {
+                                  double current = product.pricePerUnit;
+                                  double newPrice = current * 0.97;
+                                  _sellingPriceControllers[product.name]?.text = newPrice.toStringAsFixed(2);
+                                }
+                                setState(() {});
+                              },
+                            ),
+                            _buildQuickActionButton(
+                              "Copy Purchase to Selling",
+                              Icons.copy,
+                              Colors.blue,
+                              () {
+                                for (var product in products) {
+                                  double purchase = product.purchasePrice;
+                                  _sellingPriceControllers[product.name]?.text = (purchase * 1.1).toStringAsFixed(2);
+                                }
+                                setState(() {});
+                              },
+                            ),
+                            _buildQuickActionButton(
+                              "Reset to Default",
+                              Icons.restart_alt,
+                              Colors.red,
+                              () {
+                                for (var product in products) {
+                                  _sellingPriceControllers[product.name]?.text = product.pricePerUnit.toStringAsFixed(2);
+                                  _purchasePriceControllers[product.name]?.text = product.purchasePrice.toStringAsFixed(2);
+                                }
+                                setState(() {});
+                              },
+                            ),
+                          ],
+                        ),
+                        
+                        const SizedBox(height: 30),
+                        
+                        // Save Button
+                        SizedBox(
+                          width: double.infinity,
+                          height: 54,
+                          child: ElevatedButton(
+                            onPressed: _saveProductPrices,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blue.shade700,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 4,
+                            ),
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.save, size: 22),
+                                SizedBox(width: 10),
+                                Text(
+                                  "SAVE PRICE SETTINGS",
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
