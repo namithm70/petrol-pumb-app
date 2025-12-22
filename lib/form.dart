@@ -45,6 +45,10 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   
   // Stock controllers
   final Map<String, TextEditingController> _stockControllers = {};
+
+  // Redeemable controllers
+  final Map<String, TextEditingController> _redeemablePointsControllers = {};
+  final Map<String, TextEditingController> _redeemableStockControllers = {};
   
   // State variables
   String _selectedProduct = "Petrol";
@@ -120,7 +124,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     super.initState();
     _mainTabController = TabController(length: 4, vsync: this);
     _reportsTabController = TabController(length: 4, vsync: this);
-    _settingsTabController = TabController(length: 4, vsync: this);
+    _settingsTabController = TabController(length: 5, vsync: this);
     _filteredCustomers = List.from(customers);
     
     // Initialize price and stock controllers
@@ -129,6 +133,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       _sellingPriceControllers[product.name] = TextEditingController(text: product.pricePerUnit.toString());
       _stockControllers[product.name] = TextEditingController(text: product.stock.toString());
     }
+    _rebuildRedeemableControllers();
     
     // Add listeners for auto-calculation
     _unitsController.addListener(_calculateAmount);
@@ -173,6 +178,12 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       controller.dispose();
     }
     for (var controller in _stockControllers.values) {
+      controller.dispose();
+    }
+    for (var controller in _redeemablePointsControllers.values) {
+      controller.dispose();
+    }
+    for (var controller in _redeemableStockControllers.values) {
       controller.dispose();
     }
 
@@ -351,6 +362,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
 
           if (loadedRedeemables.isNotEmpty) {
             redeemableProducts = loadedRedeemables;
+            _rebuildRedeemableControllers();
           }
 
           if (settingsPayload.isNotEmpty) {
@@ -417,6 +429,23 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
           TextEditingController(text: product.pricePerUnit.toString());
       _stockControllers[product.name] =
           TextEditingController(text: product.stock.toString());
+    }
+  }
+
+  void _rebuildRedeemableControllers() {
+    for (var controller in _redeemablePointsControllers.values) {
+      controller.dispose();
+    }
+    for (var controller in _redeemableStockControllers.values) {
+      controller.dispose();
+    }
+    _redeemablePointsControllers.clear();
+    _redeemableStockControllers.clear();
+    for (var item in redeemableProducts) {
+      _redeemablePointsControllers[item.name] =
+          TextEditingController(text: item.pointsRequired.toString());
+      _redeemableStockControllers[item.name] =
+          TextEditingController(text: item.stock.toString());
     }
   }
   
@@ -1038,7 +1067,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
             headers: const {"Content-Type": "application/json"},
             body: jsonEncode(payload),
           )
-          .timeout(const Duration(seconds: 5));
+          .timeout(const Duration(seconds: 15));
 
       if (resp.statusCode != 200) {
         throw Exception("HTTP ${resp.statusCode}");
@@ -1074,6 +1103,69 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Failed to save products: $e")),
+        );
+      }
+    }
+  }
+
+  Future<void> _saveRedeemables() async {
+    setState(() {
+      for (var item in redeemableProducts) {
+        final points = int.tryParse(_redeemablePointsControllers[item.name]?.text ?? "") ?? item.pointsRequired;
+        final stock = int.tryParse(_redeemableStockControllers[item.name]?.text ?? "") ?? item.stock;
+        item.pointsRequired = points;
+        item.stock = stock;
+      }
+    });
+
+    try {
+      final uri = Uri.parse("$_backendBaseUrl/api/redeemables");
+      final payload = {
+        "redeemables": redeemableProducts
+            .map((r) => {
+                  "name": r.name,
+                  "pointsRequired": r.pointsRequired,
+                  "stock": r.stock,
+                })
+            .toList(),
+      };
+
+      final resp = await http
+          .put(
+            uri,
+            headers: const {"Content-Type": "application/json"},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (resp.statusCode != 200) {
+        throw Exception("HTTP ${resp.statusCode}");
+      }
+
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      final itemsPayload = (decoded["redeemables"] as List?)?.cast<dynamic>() ?? [];
+      final loaded = itemsPayload.map((item) {
+        final map = (item as Map).cast<String, dynamic>();
+        return RedeemableProduct(
+          name: map["name"] as String,
+          pointsRequired: (map["pointsRequired"] as num).toInt(),
+          stock: (map["stock"] as num).toInt(),
+        );
+      }).toList();
+
+      if (mounted) {
+        setState(() {
+          redeemableProducts = loaded;
+          _rebuildRedeemableControllers();
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Redeemables saved ✅")),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Failed to save redeemables: $e")),
         );
       }
     }
@@ -2575,6 +2667,7 @@ Column(
           Tab(text: 'LOYALTY'),
           Tab(text: 'PRICES'),
           Tab(text: 'STOCK'),
+          Tab(text: 'REDEEMABLES'),
           Tab(text: 'NOTIFICATIONS'),
         ],
       ),
@@ -3813,6 +3906,235 @@ Column(
                       ),
                     ],
                   ),
+          ),
+
+          // REDEEMABLES SETTINGS TAB
+          SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.card_giftcard,
+                              color: Colors.orange,
+                              size: 24,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Text(
+                            "Redeemable Items",
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1A2E35),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+
+                      if (redeemableProducts.isEmpty)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFEEEEEE)),
+                          ),
+                          child: const Text(
+                            "No redeemable items available.",
+                            style: TextStyle(color: Color(0xFF666666)),
+                          ),
+                        )
+                      else
+                        Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFEEEEEE)),
+                          ),
+                          child: Column(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFFF8F9FA),
+                                  borderRadius: BorderRadius.only(
+                                    topLeft: Radius.circular(12),
+                                    topRight: Radius.circular(12),
+                                  ),
+                                ),
+                                child: const Row(
+                                  children: [
+                                    Expanded(
+                                      flex: 2,
+                                      child: Text(
+                                        "Item",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF1A2E35),
+                                        ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        "Points",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF1A2E35),
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        "Stock",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF1A2E35),
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              ...redeemableProducts.map((item) {
+                                return Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    border: Border(
+                                      top: BorderSide(
+                                        color: const Color(0xFFEEEEEE),
+                                        width: item == redeemableProducts.first ? 0 : 1,
+                                      ),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        flex: 2,
+                                        child: Text(
+                                          item.name,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                                          child: TextField(
+                                            controller: _redeemablePointsControllers[item.name],
+                                            keyboardType: TextInputType.number,
+                                            textAlign: TextAlign.center,
+                                            decoration: InputDecoration(
+                                              border: OutlineInputBorder(
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                              contentPadding: const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 8,
+                                              ),
+                                            ),
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                                          child: TextField(
+                                            controller: _redeemableStockControllers[item.name],
+                                            keyboardType: TextInputType.number,
+                                            textAlign: TextAlign.center,
+                                            decoration: InputDecoration(
+                                              border: OutlineInputBorder(
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                              contentPadding: const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 8,
+                                              ),
+                                            ),
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
+                            ],
+                          ),
+                        ),
+
+                      const SizedBox(height: 20),
+
+                      SizedBox(
+                        width: double.infinity,
+                        height: 54,
+                        child: ElevatedButton(
+                          onPressed: redeemableProducts.isEmpty ? null : _saveRedeemables,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange.shade700,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 4,
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.save, size: 22),
+                              SizedBox(width: 10),
+                              Text(
+                                "SAVE REDEEMABLES",
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
           
           // NOTIFICATIONS TAB
