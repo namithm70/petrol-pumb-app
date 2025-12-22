@@ -47,9 +47,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   final Map<String, TextEditingController> _stockControllers = {};
   
   // State variables
-  String _selectedProduct = "Petrol";
-  double _pricePerUnit = 100.0;
-  double _purchasePrice = 90.0;
+  String _selectedProduct = "";
+  double _pricePerUnit = 0.0;
+  double _purchasePrice = 0.0;
   double _totalAmount = 0.0;
   int _units = 0;
   Customer? _selectedCustomer;
@@ -63,14 +63,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   bool _priceSyncInProgress = false;
   String? _priceSyncError;
   
-  List<Product> products = [
-    Product(name: "Petrol", pricePerUnit: 100.0, unit: "L", purchasePrice: 90.0, stock: 5000),
-    Product(name: "Diesel", pricePerUnit: 90.0, unit: "L", purchasePrice: 80.0, stock: 4000),
-    Product(name: "Engine Oil", pricePerUnit: 500.0, unit: "L", purchasePrice: 400.0, stock: 200),
-    Product(name: "Gear Oil", pricePerUnit: 450.0, unit: "L", purchasePrice: 350.0, stock: 150),
-    Product(name: "Brake Oil", pricePerUnit: 300.0, unit: "L", purchasePrice: 250.0, stock: 100),
-    Product(name: "Coolant", pricePerUnit: 250.0, unit: "L", purchasePrice: 200.0, stock: 80),
-  ];
+  List<Product> products = [];
   
   // Redeemable products (Grocery & Trending)
   List<RedeemableProduct> redeemableProducts = [];
@@ -270,6 +263,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
         return Customer(
           name: map["name"] as String,
           cardNumber: map["cardNumber"] as String,
+          barcode: map["barcode"] as String?,
           mobile: map["mobile"] as String,
           points: (map["points"] as num).toInt(),
         );
@@ -408,6 +402,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   }
   
   void _calculateAmount() {
+    if (_pricePerUnit <= 0) {
+      return;
+    }
     if (_unitsController.text.isNotEmpty) {
       _units = int.tryParse(_unitsController.text) ?? 0;
       _totalAmount = _units * _pricePerUnit;
@@ -417,6 +414,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   }
   
   void _calculateUnits() {
+    if (_pricePerUnit <= 0) {
+      return;
+    }
     if (_amountController.text.isNotEmpty) {
       double amount = double.tryParse(_amountController.text) ?? 0;
       _units = (amount / _pricePerUnit).ceil();
@@ -436,7 +436,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     });
   }
   
-  Future<void> _scanBarcode() async {
+  Future<String?> _scanBarcodeValue() async {
     final controller = MobileScannerController();
     String? scannedValue;
 
@@ -473,10 +473,24 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     );
 
     controller.dispose();
+    return scannedValue;
+  }
 
+  Future<void> _scanBarcode() async {
+    final scannedValue = await _scanBarcodeValue();
     if (scannedValue != null && mounted) {
       setState(() {
         _barcodeController.text = scannedValue!;
+      });
+      await _lookupCustomerByBarcode(scannedValue!, showNotFoundSnackbar: true);
+    }
+  }
+
+  Future<void> _scanCardNumber() async {
+    final scannedValue = await _scanBarcodeValue();
+    if (scannedValue != null && mounted) {
+      setState(() {
+        _cardNumberController.text = scannedValue!;
       });
       await _lookupCustomerByCardNumber(scannedValue!, showNotFoundSnackbar: true);
     }
@@ -493,6 +507,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
         final payload = {
           "name": _customerNameController.text,
           "cardNumber": resolvedCardNumber,
+          "barcode": _barcodeController.text.trim().isNotEmpty ? _barcodeController.text.trim() : null,
           "mobile": _mobileController.text,
         };
         final resp = await http
@@ -528,6 +543,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
         final newCustomer = Customer(
           name: customerMap["name"] as String,
           cardNumber: customerMap["cardNumber"] as String,
+          barcode: customerMap["barcode"] as String?,
           mobile: customerMap["mobile"] as String,
           points: (customerMap["points"] as num).toInt(),
         );
@@ -585,12 +601,84 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       final foundCustomer = Customer(
         name: customerMap["name"] as String,
         cardNumber: customerMap["cardNumber"] as String,
+        barcode: customerMap["barcode"] as String?,
         mobile: customerMap["mobile"] as String,
         points: (customerMap["points"] as num).toInt(),
       );
 
       setState(() {
-        _barcodeController.text = foundCustomer.cardNumber;
+        if (foundCustomer.barcode != null && foundCustomer.barcode!.isNotEmpty) {
+          _barcodeController.text = foundCustomer.barcode!;
+        }
+        _cardNumberController.text = foundCustomer.cardNumber;
+        _customerNameController.text = foundCustomer.name;
+        _mobileController.text = foundCustomer.mobile;
+
+        final index = customers.indexWhere((c) => c.cardNumber == foundCustomer.cardNumber);
+        if (index == -1) {
+          customers.add(foundCustomer);
+        } else {
+          customers[index] = foundCustomer;
+        }
+        _filteredCustomers = List.from(customers);
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Customer loaded ✅")),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Lookup failed: $e")),
+        );
+      }
+    }
+  }
+
+  Future<void> _lookupCustomerByBarcode(String barcode, {bool showNotFoundSnackbar = true}) async {
+    final trimmed = barcode.trim();
+    if (trimmed.isEmpty) return;
+
+    try {
+      final uri = Uri.parse("$_backendBaseUrl/api/customers")
+          .replace(queryParameters: {"barcode": trimmed});
+      final resp = await http.get(uri).timeout(const Duration(seconds: 5));
+      if (resp.statusCode == 404) {
+        if (mounted && showNotFoundSnackbar) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("No customer found for this barcode")),
+          );
+        }
+        return;
+      }
+      if (resp.statusCode != 200) {
+        String detail = "HTTP ${resp.statusCode}";
+        try {
+          final decodedError = jsonDecode(resp.body) as Map<String, dynamic>;
+          final errorMessage = decodedError["error"] as String?;
+          if (errorMessage != null && errorMessage.isNotEmpty) {
+            detail = errorMessage;
+          }
+        } catch (_) {}
+        throw Exception(detail);
+      }
+
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      final customerMap = (decoded["customer"] as Map).cast<String, dynamic>();
+      final foundCustomer = Customer(
+        name: customerMap["name"] as String,
+        cardNumber: customerMap["cardNumber"] as String,
+        barcode: customerMap["barcode"] as String?,
+        mobile: customerMap["mobile"] as String,
+        points: (customerMap["points"] as num).toInt(),
+      );
+
+      setState(() {
+        if (foundCustomer.barcode != null && foundCustomer.barcode!.isNotEmpty) {
+          _barcodeController.text = foundCustomer.barcode!;
+        }
         _cardNumberController.text = foundCustomer.cardNumber;
         _customerNameController.text = foundCustomer.name;
         _mobileController.text = foundCustomer.mobile;
@@ -619,6 +707,14 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   }
   
   Future<void> _processSale() async {
+    if (products.isEmpty || _selectedProduct.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Products not loaded yet.")),
+        );
+      }
+      return;
+    }
     if (_units > 0) {
       Product product = products.firstWhere((p) => p.name == _selectedProduct);
       
@@ -683,6 +779,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
             final updatedCustomer = Customer(
               name: customerMap["name"] as String,
               cardNumber: customerMap["cardNumber"] as String,
+              barcode: customerMap["barcode"] as String?,
               mobile: customerMap["mobile"] as String,
               points: (customerMap["points"] as num).toInt(),
             );
@@ -1062,6 +1159,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       final updatedCustomer = Customer(
         name: customerMap["name"] as String,
         cardNumber: customerMap["cardNumber"] as String,
+        barcode: customerMap["barcode"] as String?,
         mobile: customerMap["mobile"] as String,
         points: (customerMap["points"] as num).toInt(),
       );
@@ -1170,10 +1268,18 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       });
       titleController.clear();
       messageController.clear();
-      Navigator.pop(context);
-      _showAlert("Success", "Push notification created!");
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Push notification created ✅")),
+        );
+      }
     } catch (e) {
-      _showAlert("Failed", "Could not create notification: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Could not create notification: $e")),
+        );
+      }
     }
   }
 
@@ -2014,17 +2120,12 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                                 ),
                                 const SizedBox(width: 10),
                                 ElevatedButton(
-                                  onPressed: () => _lookupCustomerByCardNumber(
-                                    _cardNumberController.text.trim().isNotEmpty
-                                        ? _cardNumberController.text
-                                        : _barcodeController.text,
-                                    showNotFoundSnackbar: true,
-                                  ),
+                                  onPressed: _scanCardNumber,
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: const Color(0xFF1A2E35),
                                     padding: const EdgeInsets.symmetric(horizontal: 16),
                                   ),
-                                  child: const Text("LOOKUP"),
+                                  child: const Text("SCAN"),
                                 ),
                               ],
                             ),
@@ -3083,9 +3184,16 @@ Column(
           // STOCK SETTINGS TAB
           SingleChildScrollView(
             padding: const EdgeInsets.all(20),
-            child: Column(
-              children: [
-                Container(
+            child: products.isEmpty
+                ? const Center(
+                    child: Text(
+                      "No stock data yet.",
+                      style: TextStyle(color: Color(0xFF666666)),
+                    ),
+                  )
+                : Column(
+                    children: [
+                      Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
                     color: Colors.white,
@@ -3547,9 +3655,9 @@ Column(
                         ),
                     ],
                   ),
-                ),
-              ],
-            ),
+                      ),
+                    ],
+                  ),
           ),
           
           // NOTIFICATIONS TAB
@@ -3659,7 +3767,9 @@ Column(
                         label: const Text("Create New Message"),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.blue,
+                          foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                          textStyle: const TextStyle(fontWeight: FontWeight.bold),
                         ),
                       ),
                     ],
@@ -4364,12 +4474,14 @@ class Product {
 class Customer {
   String name;
   String cardNumber;
+  String? barcode;
   String mobile;
   int points;
   
   Customer({
     required this.name,
     required this.cardNumber,
+    this.barcode,
     required this.mobile,
     required this.points,
   });

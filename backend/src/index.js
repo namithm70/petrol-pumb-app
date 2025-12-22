@@ -28,6 +28,7 @@ function mapCustomerRow(row) {
   return {
     name: row.name,
     cardNumber: row.card_number,
+    barcode: row.barcode,
     mobile: row.mobile,
     points: Number(row.points),
   };
@@ -86,6 +87,18 @@ function normalizeMobile(input) {
   }
   if (trimmed.length < 8 || trimmed.length > 15) {
     throw new Error('mobile must be 8-15 characters');
+  }
+  return trimmed;
+}
+
+function normalizeBarcode(input) {
+  if (input == null || input === '') return null;
+  if (typeof input !== 'string') {
+    throw new Error('barcode must be a string');
+  }
+  const trimmed = input.trim();
+  if (trimmed.length < 1 || trimmed.length > 128) {
+    throw new Error('barcode must be 1-128 characters');
   }
   return trimmed;
 }
@@ -172,7 +185,7 @@ app.get('/api/bootstrap', async (req, res) => {
     const [productsResult, customersResult, redeemablesResult, settingsResult, salesResult, notificationsResult] =
       await Promise.all([
         db.query('SELECT name, category, price_per_unit, unit, purchase_price, stock FROM products ORDER BY name'),
-        db.query('SELECT name, card_number, mobile, points FROM customers ORDER BY name'),
+        db.query('SELECT name, card_number, barcode, mobile, points FROM customers ORDER BY name'),
         db.query('SELECT name, points_required, stock FROM redeemable_products ORDER BY name'),
         db.query('SELECT key, value FROM settings'),
         db.query(
@@ -229,7 +242,7 @@ app.get('/api/bootstrap', async (req, res) => {
 });
 
 app.post('/api/customers', async (req, res) => {
-  const { name, cardNumber, mobile } = req.body || {};
+  const { name, cardNumber, mobile, barcode } = req.body || {};
   if (!name || !cardNumber) {
     return res.status(400).json({ error: 'name and cardNumber are required' });
   }
@@ -237,20 +250,31 @@ app.post('/api/customers', async (req, res) => {
   try {
     const normalizedCard = normalizeCardNumber(cardNumber);
     const normalizedMobile = normalizeMobile(mobile);
+    const normalizedBarcode = normalizeBarcode(barcode);
 
     const existing = await db.query(
-      'SELECT name, card_number, mobile, points FROM customers WHERE card_number = $1',
+      'SELECT name, card_number, barcode, mobile, points FROM customers WHERE card_number = $1',
       [normalizedCard]
     );
     if (existing.rowCount > 0) {
       return res.status(409).json({ error: 'cardNumber already exists' });
     }
 
+    if (normalizedBarcode) {
+      const barcodeExists = await db.query(
+        'SELECT id FROM customers WHERE barcode = $1',
+        [normalizedBarcode]
+      );
+      if (barcodeExists.rowCount > 0) {
+        return res.status(409).json({ error: 'barcode already exists' });
+      }
+    }
+
     const { rows } = await db.query(
-      `INSERT INTO customers (name, card_number, mobile, points)
-       VALUES ($1, $2, $3, 0)
-       RETURNING name, card_number, mobile, points`,
-      [name, normalizedCard, normalizedMobile]
+      `INSERT INTO customers (name, card_number, barcode, mobile, points)
+       VALUES ($1, $2, $3, $4, 0)
+       RETURNING name, card_number, barcode, mobile, points`,
+      [name, normalizedCard, normalizedBarcode, normalizedMobile]
     );
 
     res.json({ customer: mapCustomerRow(rows[0]) });
@@ -261,16 +285,27 @@ app.post('/api/customers', async (req, res) => {
 });
 
 app.get('/api/customers', async (req, res) => {
-  const { cardNumber } = req.query || {};
-  if (!cardNumber) {
-    return res.status(400).json({ error: 'cardNumber query param is required' });
+  const { cardNumber, barcode } = req.query || {};
+  if (!cardNumber && !barcode) {
+    return res.status(400).json({ error: 'cardNumber or barcode query param is required' });
   }
   try {
-    const normalizedCard = normalizeCardNumber(String(cardNumber));
-    const { rows } = await db.query(
-      'SELECT name, card_number, mobile, points FROM customers WHERE card_number = $1',
-      [normalizedCard]
-    );
+    let rows = [];
+    if (cardNumber) {
+      const normalizedCard = normalizeCardNumber(String(cardNumber));
+      const result = await db.query(
+        'SELECT name, card_number, barcode, mobile, points FROM customers WHERE card_number = $1',
+        [normalizedCard]
+      );
+      rows = result.rows;
+    } else if (barcode) {
+      const normalizedBarcode = normalizeBarcode(String(barcode));
+      const result = await db.query(
+        'SELECT name, card_number, barcode, mobile, points FROM customers WHERE barcode = $1',
+        [normalizedBarcode]
+      );
+      rows = result.rows;
+    }
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Customer not found' });
     }
@@ -285,7 +320,7 @@ app.get('/api/customers/:cardNumber', async (req, res) => {
   try {
     const normalizedCard = normalizeCardNumber(req.params.cardNumber);
     const { rows } = await db.query(
-      'SELECT name, card_number, mobile, points FROM customers WHERE card_number = $1',
+      'SELECT name, card_number, barcode, mobile, points FROM customers WHERE card_number = $1',
       [normalizedCard]
     );
     if (rows.length === 0) {

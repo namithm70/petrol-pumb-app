@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS customers (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   card_number TEXT NOT NULL UNIQUE,
+  barcode TEXT UNIQUE,
   mobile TEXT NOT NULL,
   points INTEGER NOT NULL DEFAULT 0
 );
