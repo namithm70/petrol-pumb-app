@@ -62,6 +62,8 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   DateTime? _pricesLastSyncedAt;
   bool _priceSyncInProgress = false;
   String? _priceSyncError;
+  bool _bootstrapInProgress = false;
+  String? _bootstrapError;
   
   List<Product> products = [];
   
@@ -232,6 +234,12 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   }
 
   Future<void> _loadBootstrapFromBackend({required bool showErrorSnackbar}) async {
+    _bootstrapInProgress = true;
+    _bootstrapError = null;
+    if (mounted) {
+      setState(() {});
+    }
+
     try {
       final uri = Uri.parse("$_backendBaseUrl/api/bootstrap");
       final resp = await http.get(uri).timeout(const Duration(seconds: 5));
@@ -344,10 +352,16 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
         });
       }
     } catch (e) {
+      _bootstrapError = e.toString();
       if (mounted && showErrorSnackbar) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Failed to load backend data: $e")),
         );
+      }
+    } finally {
+      _bootstrapInProgress = false;
+      if (mounted) {
+        setState(() {});
       }
     }
   }
@@ -1557,24 +1571,69 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                       ),
                       const SizedBox(height: 16),
                       
-                      GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 3,
-                          childAspectRatio: 1,
-                          crossAxisSpacing: 8,
-                          mainAxisSpacing: 8,
+                      if (products.isEmpty)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFEEEEEE)),
+                          ),
+                          child: Column(
+                            children: [
+                              Text(
+                                _bootstrapInProgress
+                                    ? "Loading products..."
+                                    : "No products available.",
+                                style: const TextStyle(color: Color(0xFF666666)),
+                              ),
+                              if (_bootstrapError != null && !_bootstrapInProgress)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Text(
+                                    "Tap retry to reload.",
+                                    style: TextStyle(
+                                      color: Colors.grey.shade600,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                height: 40,
+                                child: ElevatedButton(
+                                  onPressed: _bootstrapInProgress
+                                      ? null
+                                      : () => _loadBootstrapFromBackend(showErrorSnackbar: true),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF1A2E35),
+                                  ),
+                                  child: const Text("Retry"),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        GridView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 3,
+                            childAspectRatio: 1,
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 8,
+                          ),
+                          itemCount: products.length,
+                          itemBuilder: (context, index) {
+                            return _buildProductCard(
+                              products[index].name,
+                              products[index].pricePerUnit,
+                              products[index].unit,
+                            );
+                          },
                         ),
-                        itemCount: products.length,
-                        itemBuilder: (context, index) {
-                          return _buildProductCard(
-                            products[index].name,
-                            products[index].pricePerUnit,
-                            products[index].unit,
-                          );
-                        },
-                      ),
                       
                       const SizedBox(height: 24),
                       
