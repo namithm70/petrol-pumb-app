@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -68,6 +69,65 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   String? _priceSyncError;
   bool _bootstrapInProgress = false;
   String? _bootstrapError;
+  bool _savingProducts = false;
+
+  String _safeString(dynamic value, {String fallback = ""}) {
+    if (value == null) return fallback;
+    if (value is String) return value;
+    return value.toString();
+  }
+
+  bool _productsMatchBackend(List<Product> backendProducts) {
+    final backendByName = {
+      for (final p in backendProducts) p.name: p,
+    };
+    for (final local in products) {
+      final backend = backendByName[local.name];
+      if (backend == null) return false;
+      if ((backend.pricePerUnit - local.pricePerUnit).abs() > 0.01) return false;
+      if ((backend.purchasePrice - local.purchasePrice).abs() > 0.01) return false;
+      if (backend.stock != local.stock) return false;
+      if (backend.unit != local.unit) return false;
+    }
+    return true;
+  }
+
+  void _showNoInternetSnackbar() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("No internet connection. Please check and try again.")),
+    );
+  }
+
+  Future<List<Product>?> _fetchProductsForVerify() async {
+    try {
+      final uri = Uri.parse("$_backendBaseUrl/api/products");
+      final resp = await http.get(uri).timeout(const Duration(seconds: 10));
+      if (resp.statusCode != 200) {
+        return null;
+      }
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      final productsPayload = (decoded["products"] as List?)?.cast<dynamic>() ?? [];
+      final loadedProducts = <Product>[];
+      for (final item in productsPayload) {
+        try {
+          final map = (item as Map).cast<String, dynamic>();
+          loadedProducts.add(
+            Product(
+              name: _safeString(map["name"]),
+              pricePerUnit: (map["pricePerUnit"] as num).toDouble(),
+              unit: _safeString(map["unit"], fallback: "L"),
+              purchasePrice: (map["purchasePrice"] as num?)?.toDouble() ?? 0.0,
+              stock: (map["stock"] as num?)?.toInt() ?? 0,
+            ),
+          );
+        } catch (_) {}
+      }
+      return loadedProducts;
+    } catch (_) {
+      return null;
+    }
+  }
   
   List<Product> products = [
     Product(name: "Petrol", pricePerUnit: 100.0, unit: "L", purchasePrice: 90.0, stock: 5000),
@@ -215,6 +275,30 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
       final productsPayload = (decoded["products"] as List?)?.cast<dynamic>() ?? [];
 
+      if (products.isEmpty && productsPayload.isNotEmpty) {
+        final loadedProducts = productsPayload.map((item) {
+          final map = (item as Map).cast<String, dynamic>();
+          return Product(
+            name: _safeString(map["name"]),
+            pricePerUnit: (map["pricePerUnit"] as num).toDouble(),
+            unit: _safeString(map["unit"], fallback: "L"),
+            purchasePrice: (map["purchasePrice"] as num?)?.toDouble() ?? 0.0,
+            stock: (map["stock"] as num?)?.toInt() ?? 0,
+          );
+        }).toList();
+
+        if (loadedProducts.isNotEmpty) {
+          products = loadedProducts;
+          _rebuildProductControllers();
+          if (!products.any((p) => p.name == _selectedProduct)) {
+            _selectedProduct = products.first.name;
+          }
+          final selected = products.firstWhere((p) => p.name == _selectedProduct, orElse: () => products.first);
+          _pricePerUnit = selected.pricePerUnit;
+          _purchasePrice = selected.purchasePrice;
+        }
+      }
+
       final Map<String, Product> byName = {
         for (final p in products) p.name: p,
       };
@@ -264,6 +348,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
         setState(() {});
       }
     } catch (e) {
+      if (e is SocketException) {
+        _showNoInternetSnackbar();
+      }
       _priceSyncError = e.toString();
       if (mounted && showErrorSnackbar) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -297,50 +384,72 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       final notificationsPayload = (decoded["notifications"] as List?)?.cast<dynamic>() ?? [];
       final salesPayload = (decoded["sales"] as List?)?.cast<dynamic>() ?? [];
 
-      final loadedProducts = productsPayload.map((item) {
-        final map = (item as Map).cast<String, dynamic>();
-        return Product(
-          name: map["name"] as String,
-          pricePerUnit: (map["pricePerUnit"] as num).toDouble(),
-          unit: (map["unit"] as String?) ?? "L",
-          purchasePrice: (map["purchasePrice"] as num?)?.toDouble() ?? 0.0,
-          stock: (map["stock"] as num?)?.toInt() ?? 0,
-        );
-      }).toList();
+      final loadedProducts = <Product>[];
+      for (final item in productsPayload) {
+        try {
+          final map = (item as Map).cast<String, dynamic>();
+          loadedProducts.add(
+            Product(
+              name: _safeString(map["name"]),
+              pricePerUnit: (map["pricePerUnit"] as num).toDouble(),
+              unit: _safeString(map["unit"], fallback: "L"),
+              purchasePrice: (map["purchasePrice"] as num?)?.toDouble() ?? 0.0,
+              stock: (map["stock"] as num?)?.toInt() ?? 0,
+            ),
+          );
+        } catch (_) {}
+      }
 
-      final loadedCustomers = customersPayload.map((item) {
-        final map = (item as Map).cast<String, dynamic>();
-        return Customer(
-          name: map["name"] as String,
-          cardNumber: map["cardNumber"] as String,
-          barcode: map["barcode"] as String?,
-          mobile: map["mobile"] as String,
-          points: (map["points"] as num).toInt(),
-        );
-      }).toList();
+      final loadedCustomers = <Customer>[];
+      for (final item in customersPayload) {
+        try {
+          final map = (item as Map).cast<String, dynamic>();
+          loadedCustomers.add(
+            Customer(
+              name: _safeString(map["name"]),
+              cardNumber: _safeString(map["cardNumber"]),
+              barcode: map["barcode"] as String?,
+              mobile: _safeString(map["mobile"]),
+              points: (map["points"] as num).toInt(),
+            ),
+          );
+        } catch (_) {}
+      }
 
-      final loadedRedeemables = redeemablesPayload.map((item) {
-        final map = (item as Map).cast<String, dynamic>();
-        return RedeemableProduct(
-          name: map["name"] as String,
-          pointsRequired: (map["pointsRequired"] as num).toInt(),
-          stock: (map["stock"] as num).toInt(),
-        );
-      }).toList();
+      final loadedRedeemables = <RedeemableProduct>[];
+      for (final item in redeemablesPayload) {
+        try {
+          final map = (item as Map).cast<String, dynamic>();
+          loadedRedeemables.add(
+            RedeemableProduct(
+              name: _safeString(map["name"]),
+              pointsRequired: (map["pointsRequired"] as num).toInt(),
+              stock: (map["stock"] as num).toInt(),
+            ),
+          );
+        } catch (_) {}
+      }
 
-      final loadedSales = salesPayload.map((item) {
-        final map = (item as Map).cast<String, dynamic>();
-        return SaleRecord(
-          product: map["product"] as String,
-          units: (map["units"] as num).toInt(),
-          amount: (map["amount"] as num).toDouble(),
-          purchaseCost: (map["purchaseCost"] as num).toDouble(),
-          customer: map["customer"] as String,
-          date: DateTime.parse(map["date"] as String),
-          pointsEarned: (map["pointsEarned"] as num).toInt(),
-          profit: (map["profit"] as num?)?.toDouble(),
-        );
-      }).toList();
+      final loadedSales = <SaleRecord>[];
+      for (final item in salesPayload) {
+        try {
+          final map = (item as Map).cast<String, dynamic>();
+          final dateValue = map["date"];
+          if (dateValue == null) continue;
+          loadedSales.add(
+            SaleRecord(
+              product: _safeString(map["product"]),
+              units: (map["units"] as num).toInt(),
+              amount: (map["amount"] as num).toDouble(),
+              purchaseCost: (map["purchaseCost"] as num).toDouble(),
+              customer: _safeString(map["customer"]),
+              date: DateTime.parse(_safeString(dateValue)),
+              pointsEarned: (map["pointsEarned"] as num).toInt(),
+              profit: (map["profit"] as num?)?.toDouble(),
+            ),
+          );
+        } catch (_) {}
+      }
 
       if (mounted) {
         setState(() {
@@ -383,18 +492,29 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
           }
 
           if (notificationsPayload.isNotEmpty) {
-            pushNotifications = notificationsPayload.map((item) {
-              final map = (item as Map).cast<String, dynamic>();
-              return PushNotificationMessage(
-                id: (map["id"] as num?)?.toInt(),
-                title: map["title"] as String? ?? "",
-                message: map["message"] as String? ?? "",
-              );
-            }).toList();
+            final loadedNotifications = <PushNotificationMessage>[];
+            for (final item in notificationsPayload) {
+              try {
+                final map = (item as Map).cast<String, dynamic>();
+                loadedNotifications.add(
+                  PushNotificationMessage(
+                    id: (map["id"] as num?)?.toInt(),
+                    title: _safeString(map["title"]),
+                    message: _safeString(map["message"]),
+                  ),
+                );
+              } catch (_) {}
+            }
+            if (loadedNotifications.isNotEmpty) {
+              pushNotifications = loadedNotifications;
+            }
           }
         });
       }
     } catch (e) {
+      if (e is SocketException) {
+        _showNoInternetSnackbar();
+      }
       _bootstrapError = e.toString();
       if (mounted && showErrorSnackbar) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -473,6 +593,105 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       _selectedCustomer = null;
       _customerSearchController.clear();
     });
+  }
+
+  void _openNotificationsPanel() {
+    if (!mounted) return;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.notifications, color: Color(0xFF1A2E35)),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        "Notifications",
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1A2E35),
+                        ),
+                      ),
+                    ),
+                    Text(
+                      "${pushNotifications.length}",
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1A2E35),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (pushNotifications.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Text(
+                      "No notifications yet.",
+                      style: TextStyle(color: Color(0xFF666666)),
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: pushNotifications.length,
+                      separatorBuilder: (_, __) => const Divider(height: 16),
+                      itemBuilder: (context, index) {
+                        final msg = pushNotifications[index];
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: Colors.blue.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.notifications, color: Colors.blue, size: 18),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    msg.title.isNotEmpty ? msg.title : "Notification",
+                                    style: const TextStyle(fontWeight: FontWeight.w600),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    msg.message,
+                                    style: const TextStyle(color: Color(0xFF666666)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
   
   void _calculateAmount() {
@@ -1047,6 +1266,16 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   }
 
   Future<void> _persistProductsToBackend({required String successMessage}) async {
+    if (_savingProducts) return;
+    _savingProducts = true;
+    if (mounted) {
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator()),
+      );
+    }
+
     try {
       final uri = Uri.parse("$_backendBaseUrl/api/products");
       final payload = {
@@ -1067,7 +1296,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
             headers: const {"Content-Type": "application/json"},
             body: jsonEncode(payload),
           )
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 20));
 
       if (resp.statusCode != 200) {
         throw Exception("HTTP ${resp.statusCode}");
@@ -1099,11 +1328,36 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
         );
         unawaited(_loadBootstrapFromBackend(showErrorSnackbar: false));
       }
+    } on TimeoutException {
+      final verified = await _fetchProductsForVerify();
+      if (verified != null && _productsMatchBackend(verified)) {
+        if (mounted) {
+          setState(() {
+            products = verified;
+            _rebuildProductControllers();
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Saved to backend (verified) ✅")),
+          );
+          unawaited(_loadBootstrapFromBackend(showErrorSnackbar: false));
+        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Save timed out. Check connection and try again.")),
+        );
+      }
+    } on SocketException {
+      _showNoInternetSnackbar();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Failed to save products: $e")),
         );
+      }
+    } finally {
+      _savingProducts = false;
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
       }
     }
   }
@@ -1516,31 +1770,42 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                             letterSpacing: 1,
                           ),
                         ),
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Stack(
-                            children: [
-                              const Center(
-                                child: Icon(Icons.notifications_none, color: Colors.white),
-                              ),
-                              Positioned(
-                                top: 8,
-                                right: 8,
-                                child: Container(
-                                  width: 8,
-                                  height: 8,
-                                  decoration: const BoxDecoration(
-                                    color: Colors.red,
-                                    shape: BoxShape.circle,
-                                  ),
+                        GestureDetector(
+                          onTap: _openNotificationsPanel,
+                          child: Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Stack(
+                              children: [
+                                const Center(
+                                  child: Icon(Icons.notifications_none, color: Colors.white),
                                 ),
-                              ),
-                            ],
+                                if (pushNotifications.isNotEmpty)
+                                  Positioned(
+                                    top: 6,
+                                    right: 6,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.red,
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Text(
+                                        "${pushNotifications.length}",
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
                       ],
