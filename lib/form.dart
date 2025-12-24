@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -155,28 +156,16 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   // Push notifications messages
   List<PushNotificationMessage> pushNotifications = [];
   
-  List<Customer> customers = [
-    Customer(name: "Rajesh Kumar", cardNumber: "BPCL12345678", barcode: "BPCL12345678", mobile: "9876543210", points: 1250),
-    Customer(name: "Priya Sharma", cardNumber: "BPCL87654321", barcode: "BPCL87654321", mobile: "8765432109", points: 850),
-    Customer(name: "Amit Patel", cardNumber: "BPCL98765432", barcode: "BPCL98765432", mobile: "7654321098", points: 2100),
-    Customer(name: "Sneha Reddy", cardNumber: "BPCL45678901", barcode: "BPCL45678901", mobile: "6543210987", points: 450),
-    Customer(name: "Vikram Singh", cardNumber: "BPCL23456789", barcode: "BPCL23456789", mobile: "9432109876", points: 1800),
-  ];
+  List<Customer> customers = [];
   
-  List<SaleRecord> salesRecords = [
-    SaleRecord(product: "Petrol", units: 10, amount: 1000, purchaseCost: 900, customer: "Rajesh Kumar", date: DateTime.now().subtract(Duration(days: 1)), pointsEarned: 10),
-    SaleRecord(product: "Diesel", units: 15, amount: 1350, purchaseCost: 1200, customer: "Priya Sharma", date: DateTime.now().subtract(Duration(days: 2)), pointsEarned: 15),
-    SaleRecord(product: "Engine Oil", units: 2, amount: 1000, purchaseCost: 800, customer: "Amit Patel", date: DateTime.now().subtract(Duration(days: 3)), pointsEarned: 4),
-    SaleRecord(product: "Petrol", units: 5, amount: 500, purchaseCost: 450, customer: "Rajesh Kumar", date: DateTime.now().subtract(Duration(days: 4)), pointsEarned: 5),
-    SaleRecord(product: "Diesel", units: 8, amount: 720, purchaseCost: 640, customer: "Priya Sharma", date: DateTime.now().subtract(Duration(days: 5)), pointsEarned: 8),
-  ];
+  List<SaleRecord> salesRecords = [];
   
   // Points settings
   Map<String, int> pointsSettings = {
-    'petrol': 1,
-    'diesel': 1,
-    'oil': 2,
-    'amount': 10,
+    'petrol': 0,
+    'diesel': 0,
+    'oil': 0,
+    'amount': 0,
   };
   
   @override
@@ -445,7 +434,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
               customer: _safeString(map["customer"]),
               date: DateTime.parse(_safeString(dateValue)),
               pointsEarned: (map["pointsEarned"] as num).toInt(),
-              profit: (map["profit"] as num?)?.toDouble(),
+              profit: (map["amount"] as num).toDouble() - (map["purchaseCost"] as num).toDouble(),
             ),
           );
         } catch (_) {}
@@ -789,19 +778,99 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     }
   }
   
+  bool _isValidMobileNumber(String value) {
+    return RegExp(r'^\d{10}$').hasMatch(value);
+  }
+
+  String? _cardTypeForNumber(String value) {
+    if (!RegExp(r'^\d{13,19}$').hasMatch(value)) {
+      return null;
+    }
+    final length = value.length;
+    final prefix1 = int.tryParse(value.substring(0, 1)) ?? 0;
+    final prefix2 = int.tryParse(value.substring(0, 2)) ?? 0;
+    final prefix3 = int.tryParse(value.substring(0, 3)) ?? 0;
+    final prefix4 = int.tryParse(value.substring(0, 4)) ?? 0;
+    final prefix6 = int.tryParse(value.substring(0, 6)) ?? 0;
+
+    if (prefix1 == 4 && (length == 13 || length == 16 || length == 19)) {
+      return "Visa";
+    }
+    if (length == 16 && ((prefix2 >= 51 && prefix2 <= 55) || (prefix4 >= 2221 && prefix4 <= 2720))) {
+      return "Mastercard";
+    }
+    if (length == 15 && (prefix2 == 34 || prefix2 == 37)) {
+      return "Amex";
+    }
+    if (length == 14 && ((prefix3 >= 300 && prefix3 <= 305) || prefix2 == 36 || prefix2 == 38 || prefix2 == 39)) {
+      return "Diners Club";
+    }
+    if (length == 16 && ((prefix4 == 6011) || (prefix2 == 65) || (prefix3 >= 644 && prefix3 <= 649) || (prefix6 >= 622126 && prefix6 <= 622925))) {
+      return "Discover";
+    }
+    if ((length == 16 || length == 19) && (prefix4 >= 3528 && prefix4 <= 3589)) {
+      return "JCB";
+    }
+    if ((length == 16 || length == 19) && (prefix2 == 50 || (prefix2 >= 56 && prefix2 <= 69))) {
+      return "Maestro";
+    }
+    if (length == 16 && (prefix2 == 60 || prefix2 == 65 || prefix2 == 81 || prefix2 == 82 || prefix4 == 5085 || (prefix6 >= 606985 && prefix6 <= 607985) || (prefix6 >= 608001 && prefix6 <= 608500) || (prefix6 >= 652150 && prefix6 <= 653149))) {
+      return "RuPay";
+    }
+    return null;
+  }
+
+  bool _passesLuhnCheck(String value) {
+    int sum = 0;
+    bool doubleDigit = false;
+    for (int i = value.length - 1; i >= 0; i--) {
+      int digit = int.parse(value[i]);
+      if (doubleDigit) {
+        digit *= 2;
+        if (digit > 9) {
+          digit -= 9;
+        }
+      }
+      sum += digit;
+      doubleDigit = !doubleDigit;
+    }
+    return sum % 10 == 0;
+  }
+
+  bool _isValidCardNumber(String value) {
+    return _cardTypeForNumber(value) != null && _passesLuhnCheck(value);
+  }
+
   Future<void> _addCustomer() async {
     final cardNumber = _cardNumberController.text.trim();
     final barcode = _barcodeController.text.trim();
     final resolvedCardNumber = cardNumber.isNotEmpty ? cardNumber : barcode;
+    final mobileNumber = _mobileController.text.trim();
 
     if (_customerNameController.text.isNotEmpty && resolvedCardNumber.isNotEmpty) {
+      if (!_isValidCardNumber(resolvedCardNumber)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Enter a valid card number")),
+          );
+        }
+        return;
+      }
+      if (mobileNumber.isNotEmpty && !_isValidMobileNumber(mobileNumber)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Mobile number must be 10 digits")),
+          );
+        }
+        return;
+      }
       try {
         final uri = Uri.parse("$_backendBaseUrl/api/customers");
         final payload = {
           "name": _customerNameController.text,
           "cardNumber": resolvedCardNumber,
           "barcode": _barcodeController.text.trim().isNotEmpty ? _barcodeController.text.trim() : null,
-          "mobile": _mobileController.text,
+          "mobile": mobileNumber,
         };
         final resp = await http
             .post(
@@ -1077,7 +1146,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
           customer: saleMap["customer"] as String,
           date: DateTime.parse(saleMap["date"] as String),
           pointsEarned: (saleMap["pointsEarned"] as num).toInt(),
-          profit: (saleMap["profit"] as num?)?.toDouble(),
+          profit: (saleMap["amount"] as num).toDouble() - (saleMap["purchaseCost"] as num).toDouble(),
         );
 
         final productMap = (decoded["product"] as Map).cast<String, dynamic>();
@@ -1189,10 +1258,10 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   
   Future<void> _savePointsSettings() async {
     setState(() {
-      pointsSettings['petrol'] = int.tryParse(_petrolPointsController.text) ?? 1;
-      pointsSettings['diesel'] = int.tryParse(_dieselPointsController.text) ?? 1;
-      pointsSettings['oil'] = int.tryParse(_oilPointsController.text) ?? 2;
-      pointsSettings['amount'] = int.tryParse(_amountPointsController.text) ?? 10;
+      pointsSettings['petrol'] = int.tryParse(_petrolPointsController.text) ?? 0;
+      pointsSettings['diesel'] = int.tryParse(_dieselPointsController.text) ?? 0;
+      pointsSettings['oil'] = int.tryParse(_oilPointsController.text) ?? 0;
+      pointsSettings['amount'] = int.tryParse(_amountPointsController.text) ?? 0;
     });
 
     try {
@@ -1489,9 +1558,21 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     }
   }
   
+  double _profitForRecord(SaleRecord record) {
+    return record.amount - record.purchaseCost;
+  }
+
+  double get _totalSales {
+    return salesRecords.fold(0.0, (sum, record) => sum + record.amount);
+  }
+
+  int get _totalUnits {
+    return salesRecords.fold(0, (sum, record) => sum + record.units);
+  }
+
   // Calculate total profit from sales records
   double get _totalProfit {
-    return salesRecords.fold(0.0, (sum, record) => sum + (record.profit ?? 0));
+    return salesRecords.fold(0.0, (sum, record) => sum + _profitForRecord(record));
   }
   
   // Calculate today's profit
@@ -1501,7 +1582,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       record.date.year == today.year &&
       record.date.month == today.month &&
       record.date.day == today.day
-    ).fold(0.0, (sum, record) => sum + (record.profit ?? 0));
+    ).fold(0.0, (sum, record) => sum + _profitForRecord(record));
   }
   
   // Redemption methods
@@ -1649,6 +1730,44 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       ),
     );
   }
+
+  void _showInAppNotification(PushNotificationMessage message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Row(
+          children: [
+            const Icon(Icons.notifications, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    message.title.isNotEmpty ? message.title : "Notification",
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    message.message,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        action: SnackBarAction(
+          label: "View",
+          onPressed: _openNotificationsPanel,
+          textColor: Colors.white,
+        ),
+      ),
+    );
+  }
   
   // Push notification methods
   Future<void> _createPushNotification(
@@ -1691,9 +1810,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       messageController.clear();
       if (mounted) {
         Navigator.of(context, rootNavigator: true).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Push notification created ✅")),
-        );
+        _showInAppNotification(newNotification);
       }
     } catch (e) {
       if (mounted) {
@@ -2579,32 +2696,22 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                             
                             const SizedBox(height: 16),
                             
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    controller: _cardNumberController,
-                                    onSubmitted: (value) =>
-                                        _lookupCustomerByCardNumber(value, showNotFoundSnackbar: true),
-                                    decoration: InputDecoration(
-                                      labelText: "Card Number",
-                                      prefixIcon: const Icon(Icons.credit_card),
-                                      border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                ElevatedButton(
-                                  onPressed: _scanCardNumber,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF1A2E35),
-                                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                                  ),
-                                  child: const Text("SCAN"),
-                                ),
+                            TextField(
+                              controller: _cardNumberController,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                                LengthLimitingTextInputFormatter(19),
                               ],
+                              onSubmitted: (value) =>
+                                  _lookupCustomerByCardNumber(value, showNotFoundSnackbar: true),
+                              decoration: InputDecoration(
+                                labelText: "Card Number",
+                                prefixIcon: const Icon(Icons.credit_card),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
                             ),
                             
                             const SizedBox(height: 16),
@@ -2625,6 +2732,10 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                             TextField(
                               controller: _mobileController,
                               keyboardType: TextInputType.phone,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                                LengthLimitingTextInputFormatter(10),
+                              ],
                               decoration: InputDecoration(
                                 labelText: "Mobile Number",
                                 prefixIcon: const Icon(Icons.phone),
@@ -2764,15 +2875,17 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                                           ),
                                           _buildProfitCard(
                                             "Total Sales",
-                                            salesRecords.fold(0.0, (sum, record) => sum + record.amount),
+                                            _totalSales,
                                             Colors.orange,
                                             Icons.shopping_cart,
                                           ),
                                           _buildProfitCard(
                                             "Total Units Sold",
-                                            salesRecords.fold(0, (sum, record) => sum + record.units).toDouble(),
+                                            _totalUnits,
                                             Colors.purple,
                                             Icons.format_list_numbered,
+                                            isCurrency: false,
+                                            decimals: 0,
                                           ),
                                         ],
                                       ),
@@ -2809,7 +2922,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                                             ...products.map((product) {
                                               double productProfit = salesRecords
                                                 .where((record) => record.product == product.name)
-                                                .fold(0.0, (sum, record) => sum + (record.profit ?? 0));
+                                                .fold(0.0, (sum, record) => sum + _profitForRecord(record));
                                               
                                               return Padding(
                                                 padding: const EdgeInsets.only(bottom: 12),
@@ -3034,19 +3147,21 @@ Column(
                               ),
                             ),
                             SizedBox(
-                              width: 100,
+                              width: 110,
                               child: TextField(
                                 controller: _petrolPointsController,
                                 keyboardType: TextInputType.number,
                                 textAlign: TextAlign.center,
+                                textAlignVertical: TextAlignVertical.center,
                                 decoration: InputDecoration(
                                   hintText: "Points",
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(8),
                                   ),
+                                  isDense: true,
                                   contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 8,
+                                    horizontal: 10,
+                                    vertical: 12,
                                   ),
                                 ),
                                 style: const TextStyle(
@@ -3094,19 +3209,21 @@ Column(
                               ),
                             ),
                             SizedBox(
-                              width: 100,
+                              width: 110,
                               child: TextField(
                                 controller: _dieselPointsController,
                                 keyboardType: TextInputType.number,
                                 textAlign: TextAlign.center,
+                                textAlignVertical: TextAlignVertical.center,
                                 decoration: InputDecoration(
                                   hintText: "Points",
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(8),
                                   ),
+                                  isDense: true,
                                   contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 8,
+                                    horizontal: 10,
+                                    vertical: 12,
                                   ),
                                 ),
                                 style: const TextStyle(
@@ -3154,19 +3271,21 @@ Column(
                               ),
                             ),
                             SizedBox(
-                              width: 100,
+                              width: 110,
                               child: TextField(
                                 controller: _oilPointsController,
                                 keyboardType: TextInputType.number,
                                 textAlign: TextAlign.center,
+                                textAlignVertical: TextAlignVertical.center,
                                 decoration: InputDecoration(
                                   hintText: "Points",
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(8),
                                   ),
+                                  isDense: true,
                                   contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 8,
+                                    horizontal: 10,
+                                    vertical: 12,
                                   ),
                                 ),
                                 style: const TextStyle(
@@ -3215,11 +3334,17 @@ Column(
                             TextField(
                               controller: _amountPointsController,
                               keyboardType: TextInputType.number,
+                              textAlignVertical: TextAlignVertical.center,
                               decoration: InputDecoration(
                                 labelText: "Points for every ₹ amount",
                                 prefixIcon: const Icon(Icons.add_circle_outline),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(8),
+                                ),
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 12,
                                 ),
                                 filled: true,
                                 fillColor: Colors.white,
@@ -3527,18 +3652,20 @@ Column(
                                       ),
                                       Expanded(
                                         child: Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                                          padding: const EdgeInsets.symmetric(horizontal: 2),
                                           child: TextField(
                                             controller: _purchasePriceControllers[product.name],
                                             keyboardType: TextInputType.number,
                                             textAlign: TextAlign.center,
+                                            textAlignVertical: TextAlignVertical.center,
                                             decoration: InputDecoration(
                                               border: OutlineInputBorder(
                                                 borderRadius: BorderRadius.circular(8),
                                               ),
+                                              isDense: true,
                                               contentPadding: const EdgeInsets.symmetric(
-                                                horizontal: 8,
-                                                vertical: 8,
+                                                horizontal: 6,
+                                                vertical: 10,
                                               ),
                                             ),
                                             style: const TextStyle(
@@ -3550,18 +3677,20 @@ Column(
                                       ),
                                       Expanded(
                                         child: Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                                          padding: const EdgeInsets.symmetric(horizontal: 2),
                                           child: TextField(
                                             controller: _sellingPriceControllers[product.name],
                                             keyboardType: TextInputType.number,
                                             textAlign: TextAlign.center,
+                                            textAlignVertical: TextAlignVertical.center,
                                             decoration: InputDecoration(
                                               border: OutlineInputBorder(
                                                 borderRadius: BorderRadius.circular(8),
                                               ),
+                                              isDense: true,
                                               contentPadding: const EdgeInsets.symmetric(
-                                                horizontal: 8,
-                                                vertical: 8,
+                                                horizontal: 6,
+                                                vertical: 10,
                                               ),
                                             ),
                                             style: const TextStyle(
@@ -3607,9 +3736,10 @@ Column(
                               Colors.green,
                               () {
                                 for (var product in products) {
-                                  double current = product.pricePerUnit;
-                                  double newPrice = current * 1.05;
-                                  _sellingPriceControllers[product.name]?.text = newPrice.toStringAsFixed(2);
+                                  final controller = _sellingPriceControllers[product.name];
+                                  final current = double.tryParse(controller?.text ?? "") ?? product.pricePerUnit;
+                                  final newPrice = current * 1.05;
+                                  controller?.text = newPrice.toStringAsFixed(2);
                                 }
                                 setState(() {});
                               },
@@ -3620,9 +3750,10 @@ Column(
                               Colors.orange,
                               () {
                                 for (var product in products) {
-                                  double current = product.pricePerUnit;
-                                  double newPrice = current * 0.97;
-                                  _sellingPriceControllers[product.name]?.text = newPrice.toStringAsFixed(2);
+                                  final controller = _sellingPriceControllers[product.name];
+                                  final current = double.tryParse(controller?.text ?? "") ?? product.pricePerUnit;
+                                  final newPrice = current * 0.97;
+                                  controller?.text = newPrice.toStringAsFixed(2);
                                 }
                                 setState(() {});
                               },
@@ -3940,18 +4071,20 @@ Column(
                                     ),
                                     Expanded(
                                       child: Padding(
-                                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                                        padding: const EdgeInsets.symmetric(horizontal: 2),
                                         child: TextField(
                                           controller: _stockControllers[product.name],
                                           keyboardType: TextInputType.number,
                                           textAlign: TextAlign.center,
+                                          textAlignVertical: TextAlignVertical.center,
                                           decoration: InputDecoration(
                                             border: OutlineInputBorder(
                                               borderRadius: BorderRadius.circular(8),
                                             ),
+                                            isDense: true,
                                             contentPadding: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 8,
+                                              horizontal: 6,
+                                              vertical: 10,
                                             ),
                                           ),
                                           style: const TextStyle(
@@ -4008,8 +4141,10 @@ Column(
                             Colors.green,
                             () {
                               for (var product in products) {
-                                int current = product.stock;
-                                _stockControllers[product.name]?.text = (current + 100).toString();
+                                final controller = _stockControllers[product.name];
+                                final current =
+                                    int.tryParse(controller?.text ?? "") ?? product.stock;
+                                controller?.text = (current + 100).toString();
                               }
                               setState(() {});
                             },
@@ -4020,7 +4155,10 @@ Column(
                             Colors.blue,
                             () {
                               for (var product in products) {
-                                _stockControllers[product.name]?.text = "500";
+                                final controller = _stockControllers[product.name];
+                                final current =
+                                    int.tryParse(controller?.text ?? "") ?? product.stock;
+                                controller?.text = (current < 500 ? 500 : current).toString();
                               }
                               setState(() {});
                             },
@@ -4033,7 +4171,8 @@ Column(
                               for (var product in products) {
                                 int defaultStock = 1000;
                                 if (product.name.contains("Oil")) defaultStock = 200;
-                                _stockControllers[product.name]?.text = defaultStock.toString();
+                                _stockControllers[product.name]?.text =
+                                    defaultStock.toString();
                               }
                               setState(() {});
                             },
@@ -4312,18 +4451,20 @@ Column(
                                       ),
                                       Expanded(
                                         child: Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                                          padding: const EdgeInsets.symmetric(horizontal: 2),
                                           child: TextField(
                                             controller: _redeemablePointsControllers[item.name],
                                             keyboardType: TextInputType.number,
                                             textAlign: TextAlign.center,
+                                            textAlignVertical: TextAlignVertical.center,
                                             decoration: InputDecoration(
                                               border: OutlineInputBorder(
                                                 borderRadius: BorderRadius.circular(8),
                                               ),
+                                              isDense: true,
                                               contentPadding: const EdgeInsets.symmetric(
-                                                horizontal: 8,
-                                                vertical: 8,
+                                                horizontal: 6,
+                                                vertical: 10,
                                               ),
                                             ),
                                             style: const TextStyle(
@@ -4335,18 +4476,20 @@ Column(
                                       ),
                                       Expanded(
                                         child: Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                                          padding: const EdgeInsets.symmetric(horizontal: 2),
                                           child: TextField(
                                             controller: _redeemableStockControllers[item.name],
                                             keyboardType: TextInputType.number,
                                             textAlign: TextAlign.center,
+                                            textAlignVertical: TextAlignVertical.center,
                                             decoration: InputDecoration(
                                               border: OutlineInputBorder(
                                                 borderRadius: BorderRadius.circular(8),
                                               ),
+                                              isDense: true,
                                               contentPadding: const EdgeInsets.symmetric(
-                                                horizontal: 8,
-                                                vertical: 8,
+                                                horizontal: 6,
+                                                vertical: 10,
                                               ),
                                             ),
                                             style: const TextStyle(
@@ -4379,19 +4522,22 @@ Column(
                             ),
                             elevation: 4,
                           ),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.save, size: 22),
-                              SizedBox(width: 10),
-                              Text(
-                                "SAVE REDEEMABLES",
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.save, size: 22),
+                                SizedBox(width: 10),
+                                Text(
+                                  "SAVE REDEEMABLES",
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -4451,67 +4597,79 @@ Column(
                       ),
                       const SizedBox(height: 20),
                       
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          TextEditingController titleController = TextEditingController();
-                          TextEditingController messageController = TextEditingController();
-                          
-                          showDialog(
-                            context: context,
-                            builder: (context) => AlertDialog(
-                              title: const Text("Create Push Notification"),
-                              content: SingleChildScrollView(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    TextField(
-                                      controller: titleController,
-                                      decoration: InputDecoration(
-                                        labelText: "Title",
-                                        hintText: "Enter notification title",
-                                        border: OutlineInputBorder(
-                                          borderRadius: BorderRadius.circular(12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: () {
+                            TextEditingController titleController = TextEditingController();
+                            TextEditingController messageController = TextEditingController();
+                            
+                            showDialog(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: const Text("Create Push Notification"),
+                                content: SingleChildScrollView(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      TextField(
+                                        controller: titleController,
+                                        decoration: InputDecoration(
+                                          labelText: "Title",
+                                          hintText: "Enter notification title",
+                                          border: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                    const SizedBox(height: 12),
-                                    TextField(
-                                      controller: messageController,
-                                      decoration: InputDecoration(
-                                        labelText: "Message",
-                                        hintText: "Enter notification message",
-                                        border: OutlineInputBorder(
-                                          borderRadius: BorderRadius.circular(12),
+                                      const SizedBox(height: 12),
+                                      TextField(
+                                        controller: messageController,
+                                        decoration: InputDecoration(
+                                          labelText: "Message",
+                                          hintText: "Enter notification message",
+                                          border: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
                                         ),
+                                        maxLines: 3,
                                       ),
-                                      maxLines: 3,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(context),
-                                  child: const Text("Cancel"),
-                                ),
-                                ElevatedButton(
-                                  onPressed: () => _createPushNotification(titleController, messageController),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.blue,
+                                    ],
                                   ),
-                                  child: const Text("Create"),
                                 ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    child: const Text("Cancel"),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: () => _createPushNotification(titleController, messageController),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.blue,
+                                    ),
+                                    child: const Text("Create"),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            textStyle: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.add),
+                                SizedBox(width: 8),
+                                Text("Create New Message"),
                               ],
                             ),
-                          );
-                        },
-                        icon: const Icon(Icons.add),
-                        label: const Text("Create New Message"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blue,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                          textStyle: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
                         ),
                       ),
                     ],
@@ -4697,19 +4855,24 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
       ),
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
     ),
     child: Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Icon(icon, size: 16),
         const SizedBox(width: 8),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: color,
+        Flexible(
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
           ),
         ),
       ],
@@ -4783,6 +4946,7 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
   }
   
   Widget _buildSaleRecordCard(SaleRecord record) {
+    final profit = _profitForRecord(record);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -4861,15 +5025,14 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
                 "${record.date.day}/${record.date.month}/${record.date.year} ${record.date.hour}:${record.date.minute.toString().padLeft(2, '0')}",
                 style: const TextStyle(color: Color(0xFF999999), fontSize: 11),
               ),
-              if (record.profit != null)
-                Text(
-                  "Profit: ₹${record.profit!.toStringAsFixed(2)}",
-                  style: TextStyle(
-                    color: record.profit! >= 0 ? Colors.green : Colors.red,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                  ),
+              Text(
+                "Profit: ₹${profit.toStringAsFixed(2)}",
+                style: TextStyle(
+                  color: profit >= 0 ? Colors.green : Colors.red,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
                 ),
+              ),
             ],
           ),
         ],
@@ -4877,7 +5040,15 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
     );
   }
   
-  Widget _buildProfitCard(String title, double value, Color color, IconData icon) {
+  Widget _buildProfitCard(
+    String title,
+    num value,
+    Color color,
+    IconData icon, {
+    bool isCurrency = true,
+    int decimals = 2,
+  }) {
+    final displayValue = value.toDouble();
     return Container(
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
@@ -4902,7 +5073,9 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
             ),
             const SizedBox(height: 8),
             Text(
-              "₹${value.toStringAsFixed(2)}",
+              isCurrency
+                  ? "₹${displayValue.toStringAsFixed(decimals)}"
+                  : displayValue.toStringAsFixed(decimals),
               style: TextStyle(
                 color: color,
                 fontSize: 20,
@@ -4916,6 +5089,7 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
   }
   
   Widget _buildProfitRecordCard(SaleRecord record) {
+    final profit = _profitForRecord(record);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
@@ -4960,9 +5134,9 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
               ),
               const SizedBox(height: 4),
               Text(
-                "Profit: ₹${record.profit?.toStringAsFixed(2) ?? "0.00"}",
+                "Profit: ₹${profit.toStringAsFixed(2)}",
                 style: TextStyle(
-                  color: (record.profit ?? 0) >= 0 ? Colors.green : Colors.red,
+                  color: profit >= 0 ? Colors.green : Colors.red,
                   fontWeight: FontWeight.bold,
                   fontSize: 12,
                 ),
