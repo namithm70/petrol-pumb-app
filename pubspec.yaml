@@ -11,8 +11,10 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
+  crypto: ^3.0.3
   http: ^1.2.2
   mobile_scanner: ^4.0.1
+  shared_preferences: ^2.2.3
 
 dev_dependencies:
   flutter_test:

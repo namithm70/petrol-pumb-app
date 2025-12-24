@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const crypto = require('crypto');
 const db = require('./db');
 
 const app = express();
@@ -10,8 +11,9 @@ const port = process.env.PORT ? Number(process.env.PORT) : 3001;
 app.use(cors());
 app.use(express.json());
 
-const CARD_NUMBER_MIN = 1;
-const CARD_NUMBER_MAX = 128;
+const CARD_NUMBER_MIN = 13;
+const CARD_NUMBER_MAX = 19;
+const AUTH_SESSION_TTL_DAYS = 30;
 
 function mapProductRow(row) {
   return {
@@ -70,8 +72,17 @@ function normalizeCardNumber(input) {
     throw new Error('cardNumber must be a string');
   }
   const trimmed = input.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error('cardNumber must be digits only');
+  }
   if (trimmed.length < CARD_NUMBER_MIN || trimmed.length > CARD_NUMBER_MAX) {
-    throw new Error(`cardNumber must be ${CARD_NUMBER_MIN}-${CARD_NUMBER_MAX} characters`);
+    throw new Error(`cardNumber must be ${CARD_NUMBER_MIN}-${CARD_NUMBER_MAX} digits`);
+  }
+  if (!passesLuhnCheck(trimmed)) {
+    throw new Error('cardNumber failed checksum');
+  }
+  if (!getCardType(trimmed)) {
+    throw new Error('cardNumber type not supported');
   }
   return trimmed;
 }
@@ -82,11 +93,11 @@ function normalizeMobile(input) {
     throw new Error('mobile must be a string');
   }
   const trimmed = input.trim();
-  if (!/^[0-9+ -]+$/.test(trimmed)) {
-    throw new Error('mobile must be digits');
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error('mobile must be digits only');
   }
-  if (trimmed.length < 8 || trimmed.length > 15) {
-    throw new Error('mobile must be 8-15 characters');
+  if (trimmed.length !== 10) {
+    throw new Error('mobile must be 10 digits');
   }
   return trimmed;
 }
@@ -117,9 +128,229 @@ function deriveCategoryFromName(name) {
   return 'Other';
 }
 
+function hashPin(pin, salt) {
+  return crypto.createHash('sha256').update(`${salt}:${pin}`).digest('hex');
+}
+
+function isValidPin(pin) {
+  return typeof pin === 'string' && /^\d{4}$/.test(pin);
+}
+
+function isValidPassword(password) {
+  return typeof password === 'string' && password.length >= 6;
+}
+
+function normalizeEmail(input) {
+  if (typeof input !== 'string') {
+    throw new Error('email must be a string');
+  }
+  const trimmed = input.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    throw new Error('email is invalid');
+  }
+  return trimmed;
+}
+
+function generateSalt() {
+  return crypto.randomBytes(16).toString('base64url');
+}
+
+function getCardType(value) {
+  const length = value.length;
+  const prefix1 = Number(value.slice(0, 1));
+  const prefix2 = Number(value.slice(0, 2));
+  const prefix3 = Number(value.slice(0, 3));
+  const prefix4 = Number(value.slice(0, 4));
+  const prefix6 = Number(value.slice(0, 6));
+
+  if (prefix1 === 4 && (length === 13 || length === 16 || length === 19)) {
+    return 'Visa';
+  }
+  if (length === 16 && ((prefix2 >= 51 && prefix2 <= 55) || (prefix4 >= 2221 && prefix4 <= 2720))) {
+    return 'Mastercard';
+  }
+  if (length === 15 && (prefix2 === 34 || prefix2 === 37)) {
+    return 'Amex';
+  }
+  if (length === 14 && ((prefix3 >= 300 && prefix3 <= 305) || prefix2 === 36 || prefix2 === 38 || prefix2 === 39)) {
+    return 'Diners Club';
+  }
+  if (length === 16 && (prefix4 === 6011 || prefix2 === 65 || (prefix3 >= 644 && prefix3 <= 649) || (prefix6 >= 622126 && prefix6 <= 622925))) {
+    return 'Discover';
+  }
+  if ((length === 16 || length === 19) && (prefix4 >= 3528 && prefix4 <= 3589)) {
+    return 'JCB';
+  }
+  if ((length === 16 || length === 19) && (prefix2 === 50 || (prefix2 >= 56 && prefix2 <= 69))) {
+    return 'Maestro';
+  }
+  if (length === 16 && (prefix2 === 60 || prefix2 === 65 || prefix2 === 81 || prefix2 === 82 || prefix4 === 5085 || (prefix6 >= 606985 && prefix6 <= 607985) || (prefix6 >= 608001 && prefix6 <= 608500) || (prefix6 >= 652150 && prefix6 <= 653149))) {
+    return 'RuPay';
+  }
+  return null;
+}
+
+function passesLuhnCheck(value) {
+  let sum = 0;
+  let doubleDigit = false;
+  for (let i = value.length - 1; i >= 0; i -= 1) {
+    let digit = Number(value[i]);
+    if (doubleDigit) {
+      digit *= 2;
+      if (digit > 9) {
+        digit -= 9;
+      }
+    }
+    sum += digit;
+    doubleDigit = !doubleDigit;
+  }
+  return sum % 10 === 0;
+}
+
+async function requireAuth(req, res, next) {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const { rows } = await db.query(
+      'SELECT token FROM auth_sessions WHERE token = $1 AND expires_at > NOW()',
+      [token]
+    );
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    req.authToken = token;
+    return next();
+  } catch (err) {
+    console.error('Auth check failed:', err);
+    return res.status(500).json({ error: 'Auth check failed' });
+  }
+}
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
+
+app.post('/api/auth/setup', async (req, res) => {
+  const pin = req.body?.pin;
+  const emailRaw = req.body?.email;
+  const password = req.body?.password;
+  if (!isValidPin(pin)) {
+    return res.status(400).json({ error: 'PIN must be 4 digits' });
+  }
+  if (!isValidPassword(password)) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+  let email;
+  try {
+    email = normalizeEmail(emailRaw);
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Invalid email' });
+  }
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existing = await client.query('SELECT id FROM auth_config LIMIT 1');
+    if (existing.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Account already configured' });
+    }
+    const salt = generateSalt();
+    const pinHash = hashPin(pin, salt);
+    const passwordSalt = generateSalt();
+    const passwordHash = hashPin(password, passwordSalt);
+    await client.query(
+      'INSERT INTO auth_config (email, password_salt, password_hash, pin_salt, pin_hash) VALUES ($1, $2, $3, $4, $5)',
+      [email, passwordSalt, passwordHash, salt, pinHash]
+    );
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + AUTH_SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
+    await client.query(
+      'INSERT INTO auth_sessions (token, expires_at) VALUES ($1, $2)',
+      [token, expiresAt]
+    );
+    await client.query('COMMIT');
+    return res.json({ token, expiresAt: expiresAt.toISOString() });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('POST /api/auth/setup failed:', err);
+    return res.status(500).json({ error: 'Failed to setup PIN' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const pin = req.body?.pin;
+  const emailRaw = req.body?.email;
+  const password = req.body?.password;
+  const usesPin = pin != null && pin !== '';
+  const usesEmail = emailRaw != null && emailRaw !== '';
+
+  if (!usesPin && !usesEmail) {
+    return res.status(400).json({ error: 'PIN or email/password required' });
+  }
+
+  if (usesPin && !isValidPin(pin)) {
+    return res.status(400).json({ error: 'PIN must be 4 digits' });
+  }
+  if (usesEmail && !isValidPassword(password)) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+  let email;
+  if (usesEmail) {
+    try {
+      email = normalizeEmail(emailRaw);
+    } catch (err) {
+      return res.status(400).json({ error: err.message || 'Invalid email' });
+    }
+  }
+  try {
+    const { rows } = await db.query(
+      'SELECT email, password_salt, password_hash, pin_salt, pin_hash FROM auth_config LIMIT 1'
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Account not configured' });
+    }
+    const config = rows[0];
+    if (usesPin) {
+      if (hashPin(pin, config.pin_salt) !== config.pin_hash) {
+        return res.status(401).json({ error: 'Invalid PIN' });
+      }
+    } else if (usesEmail) {
+      if (config.email !== email) {
+        return res.status(401).json({ error: 'Invalid email or password' });
+      }
+      if (hashPin(password, config.password_salt) !== config.password_hash) {
+        return res.status(401).json({ error: 'Invalid email or password' });
+      }
+    }
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + AUTH_SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
+    await db.query('INSERT INTO auth_sessions (token, expires_at) VALUES ($1, $2)', [
+      token,
+      expiresAt,
+    ]);
+    return res.json({ token, expiresAt: expiresAt.toISOString() });
+  } catch (err) {
+    console.error('POST /api/auth/login failed:', err);
+    return res.status(500).json({ error: 'Failed to login' });
+  }
+});
+
+app.post('/api/auth/logout', requireAuth, async (req, res) => {
+  try {
+    await db.query('DELETE FROM auth_sessions WHERE token = $1', [req.authToken]);
+    return res.json({ status: 'ok' });
+  } catch (err) {
+    console.error('POST /api/auth/logout failed:', err);
+    return res.status(500).json({ error: 'Failed to logout' });
+  }
+});
+
+app.use('/api', requireAuth);
 
 app.get('/api/products', async (req, res) => {
   try {

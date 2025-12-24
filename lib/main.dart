@@ -1,4 +1,4 @@
-import 'package:bpclpos/form.dart';
+import 'package:bpclpos/auth_gate.dart';
 import 'package:flutter/material.dart';
 
 void main() {
@@ -13,12 +13,9 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Flutter Demo',
       theme: ThemeData(
-      
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
-home: MyFormCard(),
+      home: const AuthGate(),
     );
   }
 }
-
-

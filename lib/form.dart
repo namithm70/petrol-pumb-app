@@ -6,6 +6,8 @@ import 'dart:io';
 import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:bpclpos/app_config.dart';
+import 'package:bpclpos/auth_service.dart';
 
 class MyFormCard extends StatefulWidget {
   const MyFormCard({super.key});
@@ -36,10 +38,10 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   final TextEditingController _customerSearchController = TextEditingController();
   
   // Settings controllers
-  final TextEditingController _petrolPointsController = TextEditingController(text: "1");
-  final TextEditingController _dieselPointsController = TextEditingController(text: "1");
-  final TextEditingController _oilPointsController = TextEditingController(text: "2");
-  final TextEditingController _amountPointsController = TextEditingController(text: "10");
+  final TextEditingController _petrolPointsController = TextEditingController(text: "0");
+  final TextEditingController _dieselPointsController = TextEditingController(text: "0");
+  final TextEditingController _oilPointsController = TextEditingController(text: "0");
+  final TextEditingController _amountPointsController = TextEditingController(text: "0");
   
   // Product price controllers
   final Map<String, TextEditingController> _purchasePriceControllers = {};
@@ -63,7 +65,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   List<Customer> _filteredCustomers = [];
 
   // Backend sync (prices)
-  static const String _backendBaseUrl = "https://bpclpos-backend.onrender.com";
+  static const String _backendBaseUrl = backendBaseUrl;
   Timer? _priceSyncTimer;
   DateTime? _pricesLastSyncedAt;
   bool _priceSyncInProgress = false;
@@ -103,7 +105,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   Future<List<Product>?> _fetchProductsForVerify() async {
     try {
       final uri = Uri.parse("$_backendBaseUrl/api/products");
-      final resp = await http.get(uri).timeout(const Duration(seconds: 10));
+      final resp = await http
+          .get(uri, headers: _authHeaders())
+          .timeout(const Duration(seconds: 10));
       if (resp.statusCode != 200) {
         return null;
       }
@@ -248,7 +252,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
 
     try {
       final uri = Uri.parse("$_backendBaseUrl/api/products");
-      final resp = await http.get(uri).timeout(const Duration(seconds: 5));
+      final resp = await http
+          .get(uri, headers: _authHeaders())
+          .timeout(const Duration(seconds: 5));
       if (resp.statusCode != 200) {
         String detail = "HTTP ${resp.statusCode}";
         try {
@@ -360,7 +366,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
 
     try {
       final uri = Uri.parse("$_backendBaseUrl/api/bootstrap");
-      final resp = await http.get(uri).timeout(const Duration(seconds: 5));
+      final resp = await http
+          .get(uri, headers: _authHeaders())
+          .timeout(const Duration(seconds: 5));
       if (resp.statusCode != 200) {
         throw Exception("HTTP ${resp.statusCode}");
       }
@@ -582,6 +590,10 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       _selectedCustomer = null;
       _customerSearchController.clear();
     });
+  }
+
+  Map<String, String> _authHeaders({bool json = true}) {
+    return AuthService.instance.authHeaders(json: json);
   }
 
   void _openNotificationsPanel() {
@@ -875,7 +887,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
         final resp = await http
             .post(
               uri,
-              headers: const {"Content-Type": "application/json"},
+              headers: _authHeaders(),
               body: jsonEncode(payload),
             )
             .timeout(const Duration(seconds: 5));
@@ -942,7 +954,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   Future<void> _refreshCustomersFromBackend() async {
     try {
       final uri = Uri.parse("$_backendBaseUrl/api/customers");
-      final resp = await http.get(uri).timeout(const Duration(seconds: 5));
+      final resp = await http
+          .get(uri, headers: _authHeaders())
+          .timeout(const Duration(seconds: 5));
       if (resp.statusCode != 200) {
         return;
       }
@@ -975,7 +989,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     try {
       final uri = Uri.parse("$_backendBaseUrl/api/customers")
           .replace(queryParameters: {"cardNumber": trimmed});
-      final resp = await http.get(uri).timeout(const Duration(seconds: 5));
+      final resp = await http
+          .get(uri, headers: _authHeaders())
+          .timeout(const Duration(seconds: 5));
       if (resp.statusCode == 404) {
         if (mounted && showNotFoundSnackbar) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1036,7 +1052,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     try {
       final uri = Uri.parse("$_backendBaseUrl/api/customers")
           .replace(queryParameters: {"barcode": trimmed});
-      final resp = await http.get(uri).timeout(const Duration(seconds: 5));
+      final resp = await http
+          .get(uri, headers: _authHeaders())
+          .timeout(const Duration(seconds: 5));
       if (resp.statusCode == 404) {
         if (mounted && showNotFoundSnackbar) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1127,7 +1145,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
         final resp = await http
             .post(
               uri,
-              headers: const {"Content-Type": "application/json"},
+              headers: _authHeaders(),
               body: jsonEncode(payload),
             )
             .timeout(const Duration(seconds: 5));
@@ -1269,7 +1287,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       final resp = await http
           .put(
             uri,
-            headers: const {"Content-Type": "application/json"},
+            headers: _authHeaders(),
             body: jsonEncode({
               "petrol": pointsSettings['petrol'],
               "diesel": pointsSettings['diesel'],
@@ -1362,7 +1380,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       final resp = await http
           .put(
             uri,
-            headers: const {"Content-Type": "application/json"},
+            headers: _authHeaders(),
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 20));
@@ -1456,7 +1474,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       final resp = await http
           .put(
             uri,
-            headers: const {"Content-Type": "application/json"},
+            headers: _authHeaders(),
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 15));
@@ -1647,7 +1665,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       final resp = await http
           .post(
             uri,
-            headers: const {"Content-Type": "application/json"},
+            headers: _authHeaders(),
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 5));
@@ -1783,7 +1801,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       final resp = await http
           .post(
             uri,
-            headers: const {"Content-Type": "application/json"},
+            headers: _authHeaders(),
             body: jsonEncode({
               "title": titleController.text,
               "message": messageController.text,
@@ -1831,7 +1849,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
 
     try {
       final uri = Uri.parse("$_backendBaseUrl/api/notifications/${msg.id}");
-      final resp = await http.delete(uri).timeout(const Duration(seconds: 5));
+      final resp = await http
+          .delete(uri, headers: _authHeaders(json: false))
+          .timeout(const Duration(seconds: 5));
       if (resp.statusCode != 200) {
         throw Exception("HTTP ${resp.statusCode}");
       }
@@ -3034,6 +3054,28 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                // SETTINGS TAB - Tabbed Version
 Column(
   children: [
+    Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          OutlinedButton.icon(
+            onPressed: () async {
+              await AuthService.instance.logout();
+            },
+            icon: const Icon(Icons.logout),
+            label: const Text("Logout"),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF1A2E35),
+              side: const BorderSide(color: Color(0xFF1A2E35)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
     Container(
       color: const Color(0xFFF8F9FA),
       child: TabBar(

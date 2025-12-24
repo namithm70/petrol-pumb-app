@@ -61,3 +61,28 @@ CREATE TABLE IF NOT EXISTS push_notifications (
   message TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS auth_config (
+  id SERIAL PRIMARY KEY,
+  email TEXT,
+  password_salt TEXT,
+  password_hash TEXT,
+  pin_salt TEXT NOT NULL,
+  pin_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE auth_config
+  ADD COLUMN IF NOT EXISTS email TEXT;
+
+ALTER TABLE auth_config
+  ADD COLUMN IF NOT EXISTS password_salt TEXT;
+
+ALTER TABLE auth_config
+  ADD COLUMN IF NOT EXISTS password_hash TEXT;
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  token TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
