@@ -67,8 +67,8 @@ CREATE TABLE IF NOT EXISTS auth_config (
   email TEXT,
   password_salt TEXT,
   password_hash TEXT,
-  pin_salt TEXT NOT NULL,
-  pin_hash TEXT NOT NULL,
+  pin_salt TEXT,
+  pin_hash TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -80,6 +80,12 @@ ALTER TABLE auth_config
 
 ALTER TABLE auth_config
   ADD COLUMN IF NOT EXISTS password_hash TEXT;
+
+ALTER TABLE auth_config
+  ALTER COLUMN pin_salt DROP NOT NULL;
+
+ALTER TABLE auth_config
+  ALTER COLUMN pin_hash DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
   token TEXT PRIMARY KEY,

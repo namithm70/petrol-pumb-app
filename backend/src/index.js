@@ -132,10 +132,6 @@ function hashPin(pin, salt) {
   return crypto.createHash('sha256').update(`${salt}:${pin}`).digest('hex');
 }
 
-function isValidPin(pin) {
-  return typeof pin === 'string' && /^\d{4}$/.test(pin);
-}
-
 function isValidPassword(password) {
   return typeof password === 'string' && password.length >= 6;
 }
@@ -234,12 +230,8 @@ app.get('/api/health', (req, res) => {
 });
 
 app.post('/api/auth/setup', async (req, res) => {
-  const pin = req.body?.pin;
   const emailRaw = req.body?.email;
   const password = req.body?.password;
-  if (!isValidPin(pin)) {
-    return res.status(400).json({ error: 'PIN must be 4 digits' });
-  }
   if (!isValidPassword(password)) {
     return res.status(400).json({ error: 'Password must be at least 6 characters' });
   }
@@ -257,13 +249,11 @@ app.post('/api/auth/setup', async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Account already configured' });
     }
-    const salt = generateSalt();
-    const pinHash = hashPin(pin, salt);
     const passwordSalt = generateSalt();
     const passwordHash = hashPin(password, passwordSalt);
     await client.query(
-      'INSERT INTO auth_config (email, password_salt, password_hash, pin_salt, pin_hash) VALUES ($1, $2, $3, $4, $5)',
-      [email, passwordSalt, passwordHash, salt, pinHash]
+      'INSERT INTO auth_config (email, password_salt, password_hash) VALUES ($1, $2, $3)',
+      [email, passwordSalt, passwordHash]
     );
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + AUTH_SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
@@ -283,49 +273,33 @@ app.post('/api/auth/setup', async (req, res) => {
 });
 
 app.post('/api/auth/login', async (req, res) => {
-  const pin = req.body?.pin;
   const emailRaw = req.body?.email;
   const password = req.body?.password;
-  const usesPin = pin != null && pin !== '';
-  const usesEmail = emailRaw != null && emailRaw !== '';
-
-  if (!usesPin && !usesEmail) {
-    return res.status(400).json({ error: 'PIN or email/password required' });
+  if (!emailRaw) {
+    return res.status(400).json({ error: 'Email required' });
   }
-
-  if (usesPin && !isValidPin(pin)) {
-    return res.status(400).json({ error: 'PIN must be 4 digits' });
-  }
-  if (usesEmail && !isValidPassword(password)) {
+  if (!isValidPassword(password)) {
     return res.status(400).json({ error: 'Password must be at least 6 characters' });
   }
   let email;
-  if (usesEmail) {
-    try {
-      email = normalizeEmail(emailRaw);
-    } catch (err) {
-      return res.status(400).json({ error: err.message || 'Invalid email' });
-    }
+  try {
+    email = normalizeEmail(emailRaw);
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Invalid email' });
   }
   try {
     const { rows } = await db.query(
-      'SELECT email, password_salt, password_hash, pin_salt, pin_hash FROM auth_config LIMIT 1'
+      'SELECT email, password_salt, password_hash FROM auth_config LIMIT 1'
     );
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Account not configured' });
     }
     const config = rows[0];
-    if (usesPin) {
-      if (hashPin(pin, config.pin_salt) !== config.pin_hash) {
-        return res.status(401).json({ error: 'Invalid PIN' });
-      }
-    } else if (usesEmail) {
-      if (config.email !== email) {
-        return res.status(401).json({ error: 'Invalid email or password' });
-      }
-      if (hashPin(password, config.password_salt) !== config.password_hash) {
-        return res.status(401).json({ error: 'Invalid email or password' });
-      }
+    if (config.email !== email) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    if (hashPin(password, config.password_salt) !== config.password_hash) {
+      return res.status(401).json({ error: 'Invalid email or password' });
     }
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + AUTH_SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
