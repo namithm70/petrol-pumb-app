@@ -1,3 +1,4 @@
+// Backend API for BPCL POS System
 require('dotenv').config();
 
 const express = require('express');
