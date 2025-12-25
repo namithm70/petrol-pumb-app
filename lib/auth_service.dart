@@ -136,6 +136,7 @@ class AuthService {
     }
   }
 
+
   Future<void> logout() async {
     final token = _token;
     _token = null;
