@@ -211,13 +211,14 @@ async function requireAuth(req, res, next) {
   }
   try {
     const { rows } = await db.query(
-      'SELECT token FROM auth_sessions WHERE token = $1 AND expires_at > NOW()',
+      'SELECT token, user_id FROM auth_sessions WHERE token = $1 AND expires_at > NOW()',
       [token]
     );
     if (rows.length === 0) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     req.authToken = token;
+    req.authUserId = rows[0].user_id ?? null;
     return next();
   } catch (err) {
     console.error('Auth check failed:', err);
@@ -244,29 +245,31 @@ app.post('/api/auth/setup', async (req, res) => {
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-    const existing = await client.query('SELECT id FROM auth_config LIMIT 1');
+    const existing = await client.query('SELECT id FROM auth_users WHERE email = $1', [email]);
     if (existing.rows.length > 0) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'Account already configured' });
+      return res.status(409).json({ error: 'Email already registered' });
     }
     const passwordSalt = generateSalt();
     const passwordHash = hashPin(password, passwordSalt);
     await client.query(
-      'INSERT INTO auth_config (email, password_salt, password_hash) VALUES ($1, $2, $3)',
+      'INSERT INTO auth_users (email, password_salt, password_hash) VALUES ($1, $2, $3)',
       [email, passwordSalt, passwordHash]
     );
+    const userRow = await client.query('SELECT id FROM auth_users WHERE email = $1', [email]);
+    const userId = userRow.rows[0].id;
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + AUTH_SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
     await client.query(
-      'INSERT INTO auth_sessions (token, expires_at) VALUES ($1, $2)',
-      [token, expiresAt]
+      'INSERT INTO auth_sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
+      [token, userId, expiresAt]
     );
     await client.query('COMMIT');
     return res.json({ token, expiresAt: expiresAt.toISOString() });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('POST /api/auth/setup failed:', err);
-    return res.status(500).json({ error: 'Failed to setup PIN' });
+    return res.status(500).json({ error: 'Failed to create account' });
   } finally {
     client.release();
   }
@@ -288,25 +291,42 @@ app.post('/api/auth/login', async (req, res) => {
     return res.status(400).json({ error: err.message || 'Invalid email' });
   }
   try {
+    let user = null;
     const { rows } = await db.query(
-      'SELECT email, password_salt, password_hash FROM auth_config LIMIT 1'
+      'SELECT id, email, password_salt, password_hash FROM auth_users WHERE email = $1',
+      [email]
     );
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'Account not configured' });
+    if (rows.length > 0) {
+      user = rows[0];
+    } else {
+      const legacy = await db.query(
+        'SELECT email, password_salt, password_hash FROM auth_config LIMIT 1'
+      );
+      if (legacy.rows.length > 0 && legacy.rows[0].email === email) {
+        const legacyRow = legacy.rows[0];
+        if (hashPin(password, legacyRow.password_salt) !== legacyRow.password_hash) {
+          return res.status(401).json({ error: 'Invalid email or password' });
+        }
+        const created = await db.query(
+          'INSERT INTO auth_users (email, password_salt, password_hash) VALUES ($1, $2, $3) RETURNING id',
+          [email, legacyRow.password_salt, legacyRow.password_hash]
+        );
+        user = { id: created.rows[0].id };
+      } else {
+        return res.status(401).json({ error: 'Invalid email or password' });
+      }
     }
-    const config = rows[0];
-    if (config.email !== email) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-    if (hashPin(password, config.password_salt) !== config.password_hash) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+    if (user && user.password_salt && user.password_hash) {
+      if (hashPin(password, user.password_salt) !== user.password_hash) {
+        return res.status(401).json({ error: 'Invalid email or password' });
+      }
     }
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + AUTH_SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
-    await db.query('INSERT INTO auth_sessions (token, expires_at) VALUES ($1, $2)', [
-      token,
-      expiresAt,
-    ]);
+    await db.query(
+      'INSERT INTO auth_sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
+      [token, user.id ?? null, expiresAt]
+    );
     return res.json({ token, expiresAt: expiresAt.toISOString() });
   } catch (err) {
     console.error('POST /api/auth/login failed:', err);

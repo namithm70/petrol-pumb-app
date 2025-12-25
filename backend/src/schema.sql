@@ -92,3 +92,14 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   expires_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS auth_users (
+  id SERIAL PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  password_salt TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE auth_sessions
+  ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES auth_users(id) ON DELETE CASCADE;
