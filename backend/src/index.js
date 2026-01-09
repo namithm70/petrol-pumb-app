@@ -12,8 +12,10 @@ const port = process.env.PORT ? Number(process.env.PORT) : 3001;
 app.use(cors());
 app.use(express.json());
 
-const CARD_NUMBER_MIN = 8;
-const CARD_NUMBER_MAX = 20;
+const CARD_NUMBER_SHORT_MIN = 3;
+const CARD_NUMBER_SHORT_MAX = 6;
+const CARD_NUMBER_LONG_MIN = 8;
+const CARD_NUMBER_LONG_MAX = 20;
 const AUTH_SESSION_TTL_DAYS = 30;
 
 function mapProductRow(row) {
@@ -76,8 +78,13 @@ function normalizeCardNumber(input) {
   if (!/^\d+$/.test(trimmed)) {
     throw new Error('cardNumber must be digits only');
   }
-  if (trimmed.length < CARD_NUMBER_MIN || trimmed.length > CARD_NUMBER_MAX) {
-    throw new Error(`cardNumber must be ${CARD_NUMBER_MIN}-${CARD_NUMBER_MAX} digits`);
+  const length = trimmed.length;
+  const isShort =
+    length >= CARD_NUMBER_SHORT_MIN && length <= CARD_NUMBER_SHORT_MAX;
+  const isLong =
+    length >= CARD_NUMBER_LONG_MIN && length <= CARD_NUMBER_LONG_MAX;
+  if (!isShort && !isLong) {
+    throw new Error('cardNumber must be 3-6 or 8-20 digits');
   }
   return trimmed;
 }
