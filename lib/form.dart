@@ -40,7 +40,6 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   final TextEditingController _cardNumberController = TextEditingController();
   final TextEditingController _mobileController = TextEditingController();
   final TextEditingController _barcodeController = TextEditingController();
-  final TextEditingController _pointsController = TextEditingController();
   
   // Customer search in sales
   final TextEditingController _customerSearchController = TextEditingController();
@@ -229,7 +228,6 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     _cardNumberController.dispose();
     _mobileController.dispose();
     _barcodeController.dispose();
-    _pointsController.dispose();
     _customerSearchController.dispose();
     _petrolPointsController.dispose();
     _dieselPointsController.dispose();
@@ -872,19 +870,6 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     final barcode = _barcodeController.text.trim();
     final resolvedCardNumber = cardNumber.isNotEmpty ? cardNumber : barcode;
     final mobileNumber = _mobileController.text.trim();
-    final pointsText = _pointsController.text.trim();
-    int? points;
-    if (pointsText.isNotEmpty) {
-      points = int.tryParse(pointsText);
-      if (points == null || points < 0) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Points must be a non-negative number")),
-          );
-        }
-        return;
-      }
-    }
 
     if (_customerNameController.text.isNotEmpty && resolvedCardNumber.isNotEmpty) {
       if (!_isValidCardNumber(resolvedCardNumber)) {
@@ -912,7 +897,6 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
           "cardNumber": resolvedCardNumber,
           "barcode": _barcodeController.text.trim().isNotEmpty ? _barcodeController.text.trim() : null,
           "mobile": mobileNumber,
-          "points": points ?? 0,
         };
         final resp = await http
             .post(
@@ -959,7 +943,6 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
           _cardNumberController.clear();
           _mobileController.clear();
           _barcodeController.clear();
-          _pointsController.clear();
         });
         unawaited(_refreshCustomersFromBackend());
 
@@ -2869,24 +2852,6 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                               decoration: InputDecoration(
                                 labelText: "Customer Name",
                                 prefixIcon: const Icon(Icons.person),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                            ),
-                            
-                            const SizedBox(height: 16),
-
-                            TextField(
-                              controller: _pointsController,
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                                LengthLimitingTextInputFormatter(6),
-                              ],
-                              decoration: InputDecoration(
-                                labelText: "Starting Points",
-                                prefixIcon: const Icon(Icons.stars),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
