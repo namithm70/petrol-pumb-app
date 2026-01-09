@@ -1,1 +1,3 @@
-const String backendBaseUrl = "https://bpclpos-backend-ib1t.onrender.com";
+import 'core/constants/url_constants.dart';
+
+const String backendBaseUrl = UrlConstants.baseUrl;

@@ -1,8 +1,10 @@
 import 'package:bpclpos/auth_gate.dart';
 import 'package:flutter/material.dart';
 
+import 'di/providers.dart';
+
 void main() {
-  runApp(const MyApp());
+  runApp(const AppProviders(child: MyApp()));
 }
 
 class MyApp extends StatelessWidget {

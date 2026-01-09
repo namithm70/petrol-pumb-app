@@ -7,7 +7,14 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:bpclpos/app_config.dart';
-import 'package:bpclpos/auth_service.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+
+import 'core/session/auth_session_manager.dart';
+import 'features/auth/presentation/bloc/auth_bloc.dart';
+import 'features/auth/presentation/bloc/auth_event.dart';
+import 'features/notifications/presentation/bloc/notifications_bloc.dart';
+import 'features/notifications/presentation/bloc/notifications_event.dart';
+import 'features/notifications/presentation/bloc/notifications_state.dart';
 
 class MyFormCard extends StatefulWidget {
   const MyFormCard({super.key});
@@ -198,6 +205,11 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
     // Initial data load from backend
     unawaited(_loadBootstrapFromBackend(showErrorSnackbar: false));
     unawaited(_refreshCustomersFromBackend());
+    Future.microtask(() {
+      if (mounted) {
+        context.read<NotificationsBloc>().add(const NotificationsRequested());
+      }
+    });
 
     // Auto-sync latest prices from backend
     unawaited(_syncPricesFromBackend(showErrorSnackbar: false));
@@ -593,7 +605,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   }
 
   Map<String, String> _authHeaders({bool json = true}) {
-    return AuthService.instance.authHeaders(json: json);
+    return AuthSessionManager.instance.authHeaders(json: json);
   }
 
   void _openNotificationsPanel() {
@@ -850,7 +862,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   }
 
   bool _isValidCardNumber(String value) {
-    return RegExp(r'^\d{8,20}$').hasMatch(value);
+    return RegExp(r'^(\d{3,6}|\d{8,20})$').hasMatch(value);
   }
 
   Future<void> _addCustomer() async {
@@ -863,7 +875,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       if (!_isValidCardNumber(resolvedCardNumber)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Enter a valid card number")),
+            const SnackBar(
+              content: Text("Card number must be 3-6 or 8-20 digits"),
+            ),
           );
         }
         return;
@@ -948,6 +962,77 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Name and card number are required")),
       );
+    }
+  }
+
+  Future<void> _confirmDeleteCustomer(Customer customer) async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Delete customer"),
+        content: Text(
+          "Delete ${customer.name} (${customer.cardNumber})? This cannot be undone.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text("Delete"),
+          ),
+        ],
+      ),
+    );
+    if (shouldDelete == true) {
+      await _deleteCustomer(customer);
+    }
+  }
+
+  Future<void> _deleteCustomer(Customer customer) async {
+    try {
+      final uri = Uri.parse(
+        "$_backendBaseUrl/api/customers/${Uri.encodeComponent(customer.cardNumber)}",
+      );
+      final resp = await http
+          .delete(uri, headers: _authHeaders(json: false))
+          .timeout(const Duration(seconds: 5));
+      if (resp.statusCode == 404) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Customer not found")),
+          );
+        }
+        return;
+      }
+      if (resp.statusCode != 200) {
+        throw Exception("HTTP ${resp.statusCode}");
+      }
+      if (!mounted) return;
+      setState(() {
+        customers.removeWhere((c) => c.cardNumber == customer.cardNumber);
+        _filteredCustomers
+            .removeWhere((c) => c.cardNumber == customer.cardNumber);
+        if (_selectedCustomer?.cardNumber == customer.cardNumber) {
+          _selectedCustomer = null;
+          _customerNameController.clear();
+          _cardNumberController.clear();
+          _mobileController.clear();
+          _barcodeController.clear();
+        }
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Customer deleted")),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Failed to delete customer: $e")),
+        );
+      }
     }
   }
 
@@ -1865,10 +1950,36 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
-      body: Column(
-        children: [
+    return BlocListener<NotificationsBloc, NotificationsState>(
+      listenWhen: (previous, current) =>
+          previous.status != current.status ||
+          previous.items != current.items ||
+          previous.message != current.message,
+      listener: (context, state) {
+        if (!mounted) return;
+        if (state.status == NotificationsStatus.loaded) {
+          setState(() {
+            pushNotifications = state.items
+                .map(
+                  (item) => PushNotificationMessage(
+                    id: item.id,
+                    title: item.title,
+                    message: item.message,
+                  ),
+                )
+                .toList();
+          });
+        } else if (state.status == NotificationsStatus.error &&
+            state.message != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(state.message!)),
+          );
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF5F7FA),
+        body: Column(
+          children: [
           // Header
           Container(
             decoration: BoxDecoration(
@@ -3060,8 +3171,8 @@ Column(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
           OutlinedButton.icon(
-            onPressed: () async {
-              await AuthService.instance.logout();
+            onPressed: () {
+              context.read<AuthBloc>().add(const AuthLogoutRequested());
             },
             icon: const Icon(Icons.logout),
             label: const Text("Logout"),
@@ -4859,7 +4970,8 @@ Column(
 ],
             ),
           ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -4979,6 +5091,13 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
               const Text(
                 "Points",
                 style: TextStyle(fontSize: 12, color: Color(0xFF666666)),
+              ),
+              const SizedBox(height: 6),
+              IconButton(
+                onPressed: () => _confirmDeleteCustomer(customer),
+                icon: const Icon(Icons.delete_outline),
+                color: Colors.redAccent,
+                tooltip: "Delete",
               ),
             ],
           ),

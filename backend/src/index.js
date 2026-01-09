@@ -563,6 +563,23 @@ app.get('/api/customers/:cardNumber', async (req, res) => {
   }
 });
 
+app.delete('/api/customers/:cardNumber', async (req, res) => {
+  try {
+    const normalizedCard = normalizeCardNumber(req.params.cardNumber);
+    const { rows } = await db.query(
+      'DELETE FROM customers WHERE card_number = $1 RETURNING name, card_number, barcode, mobile, points',
+      [normalizedCard]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+    return res.json({ customer: mapCustomerRow(rows[0]) });
+  } catch (err) {
+    console.error('DELETE /api/customers/:cardNumber failed:', err);
+    return res.status(400).json({ error: err.message || 'Failed to delete customer' });
+  }
+});
+
 app.post('/api/sales', async (req, res) => {
   const { product, units, amount, customerCardNumber } = req.body || {};
   if (!product || !units || !amount) {
