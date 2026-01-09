@@ -850,7 +850,7 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   }
 
   bool _isValidCardNumber(String value) {
-    return _cardTypeForNumber(value) != null && _passesLuhnCheck(value);
+    return RegExp(r'^\d{8,20}$').hasMatch(value);
   }
 
   Future<void> _addCustomer() async {

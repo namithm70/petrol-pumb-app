@@ -12,8 +12,8 @@ const port = process.env.PORT ? Number(process.env.PORT) : 3001;
 app.use(cors());
 app.use(express.json());
 
-const CARD_NUMBER_MIN = 13;
-const CARD_NUMBER_MAX = 19;
+const CARD_NUMBER_MIN = 8;
+const CARD_NUMBER_MAX = 20;
 const AUTH_SESSION_TTL_DAYS = 30;
 
 function mapProductRow(row) {
@@ -78,12 +78,6 @@ function normalizeCardNumber(input) {
   }
   if (trimmed.length < CARD_NUMBER_MIN || trimmed.length > CARD_NUMBER_MAX) {
     throw new Error(`cardNumber must be ${CARD_NUMBER_MIN}-${CARD_NUMBER_MAX} digits`);
-  }
-  if (!passesLuhnCheck(trimmed)) {
-    throw new Error('cardNumber failed checksum');
-  }
-  if (!getCardType(trimmed)) {
-    throw new Error('cardNumber type not supported');
   }
   return trimmed;
 }

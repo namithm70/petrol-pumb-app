@@ -12,7 +12,7 @@ services:
       - key: DATABASE_URL
         fromDatabase:
           name: bpclpos-postgres
-          property: connectionString
+          property: internalConnectionString
 databases:
   - name: bpclpos-postgres
     plan: free
