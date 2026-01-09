@@ -1,6 +1,7 @@
 import '../../../../core/constants/url_constants.dart';
 import '../../../../core/errors/app_exception.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/session/auth_session_manager.dart';
 import '../../../../core/utils/either.dart';
 import '../models/notification_model.dart';
 
@@ -19,7 +20,10 @@ class NotificationsRemoteDataSourceImpl implements NotificationsRemoteDataSource
 
   @override
   Future<Either<AppException, List<NotificationModel>>> fetchNotifications() async {
-    final result = await apiClient.get(UrlConstants.notifications);
+    final result = await apiClient.get(
+      UrlConstants.notifications,
+      headers: AuthSessionManager.instance.authHeaders(),
+    );
     if (result is Left<AppException, ApiResponse>) {
       return Left(result.value);
     }
@@ -51,6 +55,7 @@ class NotificationsRemoteDataSourceImpl implements NotificationsRemoteDataSource
   }) async {
     final result = await apiClient.post(
       UrlConstants.notifications,
+      headers: AuthSessionManager.instance.authHeaders(),
       body: {'title': title, 'message': message},
     );
     if (result is Left<AppException, ApiResponse>) {

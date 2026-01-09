@@ -469,7 +469,7 @@ app.get('/api/bootstrap', async (req, res) => {
 });
 
 app.post('/api/customers', async (req, res) => {
-  const { name, cardNumber, mobile, barcode } = req.body || {};
+  const { name, cardNumber, mobile, barcode, points } = req.body || {};
   if (!name || !cardNumber) {
     return res.status(400).json({ error: 'name and cardNumber are required' });
   }
@@ -478,6 +478,14 @@ app.post('/api/customers', async (req, res) => {
     const normalizedCard = normalizeCardNumber(cardNumber);
     const normalizedMobile = normalizeMobile(mobile);
     const normalizedBarcode = normalizeBarcode(barcode);
+    let normalizedPoints = 0;
+    if (points !== undefined && points !== null && points !== '') {
+      const parsed = Number(points);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        throw new Error('points must be a non-negative integer');
+      }
+      normalizedPoints = parsed;
+    }
 
     const existing = await db.query(
       'SELECT name, card_number, barcode, mobile, points FROM customers WHERE card_number = $1',
@@ -499,9 +507,9 @@ app.post('/api/customers', async (req, res) => {
 
     const { rows } = await db.query(
       `INSERT INTO customers (name, card_number, barcode, mobile, points)
-       VALUES ($1, $2, $3, $4, 0)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING name, card_number, barcode, mobile, points`,
-      [name, normalizedCard, normalizedBarcode, normalizedMobile]
+      [name, normalizedCard, normalizedBarcode, normalizedMobile, normalizedPoints]
     );
 
     res.json({ customer: mapCustomerRow(rows[0]) });
