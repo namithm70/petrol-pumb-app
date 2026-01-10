@@ -1,4 +1,4 @@
-import 'package:bpclpos/auth_gate.dart';
+import 'package:bpclpos/features/auth/presentation/views/auth_gate_view.dart';
 import 'package:flutter/material.dart';
 
 import 'di/providers.dart';

@@ -26,23 +26,24 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
   ) async {
     emit(state.copyWith(status: NotificationsStatus.loading, clearMessage: true));
     final result = await fetchNotificationsUseCase();
-    if (result is Left<AppException, List<NotificationItem>>) {
-      emit(
-        state.copyWith(
-          status: NotificationsStatus.error,
-          message: result.value.message,
-        ),
-      );
-      return;
-    }
-    final items =
-        (result as Right<AppException, List<NotificationItem>>).value;
-    emit(
-      state.copyWith(
-        status: NotificationsStatus.loaded,
-        items: items,
-        clearMessage: true,
-      ),
+    result.fold(
+      (error) {
+        emit(
+          state.copyWith(
+            status: NotificationsStatus.error,
+            message: error.message,
+          ),
+        );
+      },
+      (items) {
+        emit(
+          state.copyWith(
+            status: NotificationsStatus.loaded,
+            items: items,
+            clearMessage: true,
+          ),
+        );
+      },
     );
   }
 
@@ -55,23 +56,25 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
       title: event.title,
       message: event.message,
     );
-    if (result is Left<AppException, NotificationItem>) {
-      emit(
-        state.copyWith(
-          status: NotificationsStatus.error,
-          message: result.value.message,
-        ),
-      );
-      return;
-    }
-    final item = (result as Right<AppException, NotificationItem>).value;
-    final updatedItems = [item, ...state.items];
-    emit(
-      state.copyWith(
-        status: NotificationsStatus.loaded,
-        items: updatedItems,
-        clearMessage: true,
-      ),
+    result.fold(
+      (error) {
+        emit(
+          state.copyWith(
+            status: NotificationsStatus.error,
+            message: error.message,
+          ),
+        );
+      },
+      (item) {
+        final updatedItems = [item, ...state.items];
+        emit(
+          state.copyWith(
+            status: NotificationsStatus.loaded,
+            items: updatedItems,
+            clearMessage: true,
+          ),
+        );
+      },
     );
   }
 }

@@ -9,21 +9,26 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:bpclpos/app_config.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import 'core/session/auth_session_manager.dart';
-import 'features/auth/presentation/bloc/auth_bloc.dart';
-import 'features/auth/presentation/bloc/auth_event.dart';
-import 'features/notifications/presentation/bloc/notifications_bloc.dart';
-import 'features/notifications/presentation/bloc/notifications_event.dart';
-import 'features/notifications/presentation/bloc/notifications_state.dart';
+import 'package:bpclpos/core/session/auth_session_manager.dart';
+import 'package:bpclpos/features/auth/presentation/bloc/auth_bloc.dart';
+import 'package:bpclpos/features/auth/presentation/bloc/auth_event.dart';
+import 'package:bpclpos/features/home/domain/entities/home_entities.dart';
+import 'package:bpclpos/features/home/presentation/widgets/customer_search_card.dart';
+import 'package:bpclpos/features/home/presentation/widgets/home_text_field.dart';
+import 'package:bpclpos/features/home/presentation/widgets/registered_customers_section.dart';
+import 'package:bpclpos/features/home/presentation/widgets/register_loyalty_card_form.dart';
+import 'package:bpclpos/features/notifications/presentation/bloc/notifications_bloc.dart';
+import 'package:bpclpos/features/notifications/presentation/bloc/notifications_event.dart';
+import 'package:bpclpos/features/notifications/presentation/bloc/notifications_state.dart';
 
-class MyFormCard extends StatefulWidget {
-  const MyFormCard({super.key});
+class HomeView extends StatefulWidget {
+  const HomeView({super.key});
 
   @override
-  State<MyFormCard> createState() => _MyFormCardState();
+  State<HomeView> createState() => _HomeViewState();
 }
 
-class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
+class _HomeViewState extends State<HomeView> with TickerProviderStateMixin {
   late TabController _mainTabController;
   late TabController _reportsTabController;
   late TabController _settingsTabController;
@@ -606,6 +611,22 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
 
   Map<String, String> _authHeaders({bool json = true}) {
     return AuthSessionManager.instance.authHeaders(json: json);
+  }
+
+  DateTime _toKolkataTime(DateTime dateTime) {
+    final utc = dateTime.isUtc ? dateTime : dateTime.toUtc();
+    return utc.add(const Duration(hours: 5, minutes: 30));
+  }
+
+  String _formatKolkataDateTime(DateTime dateTime) {
+    final local = _toKolkataTime(dateTime);
+    return "${local.day}/${local.month}/${local.year} "
+        "${local.hour}:${local.minute.toString().padLeft(2, '0')}";
+  }
+
+  String _formatKolkataDate(DateTime dateTime) {
+    final local = _toKolkataTime(dateTime);
+    return "${local.day}/${local.month}/${local.year}";
   }
 
   void _openNotificationsPanel() {
@@ -1950,6 +1971,16 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
   
   @override
   Widget build(BuildContext context) {
+    Customer? selectedCustomerValue;
+    if (_selectedCustomer != null) {
+      for (final customer in customers) {
+        if (customer.cardNumber == _selectedCustomer!.cardNumber) {
+          selectedCustomerValue = customer;
+          break;
+        }
+      }
+    }
+
     return BlocListener<NotificationsBloc, NotificationsState>(
       listenWhen: (previous, current) =>
           previous.status != current.status ||
@@ -2095,133 +2126,19 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // Customer Search Section
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.05),
-                              blurRadius: 5,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                const Icon(Icons.search, color: Color(0xFF1A2E35)),
-                                const SizedBox(width: 8),
-                                const Text(
-                                  "Customer Search",
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                    color: Color(0xFF1A2E35),
-                                  ),
-                                ),
-                                if (_selectedCustomer != null) ...[
-                                  const Spacer(),
-                                  IconButton(
-                                    onPressed: _clearCustomerSelection,
-                                    icon: const Icon(Icons.clear, color: Colors.red, size: 20),
-                                  ),
-                                ],
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            TextField(
-                              controller: _customerSearchController,
-                              decoration: InputDecoration(
-                                hintText: "Search by name, mobile or card number",
-                                prefixIcon: const Icon(Icons.person_search),
-                                suffixIcon: IconButton(
-                                  icon: const Icon(Icons.qr_code_scanner),
-                                  onPressed: _scanBarcode,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: const BorderSide(color: Color(0xFFEEEEEE)),
-                                ),
-                              ),
-                              onTap: () {
-                                setState(() {
-                                  _showCustomerList = true;
-                                });
-                              },
-                            ),
-                            
-                            // Customer List
-                            if (_showCustomerList && _customerSearchController.text.isNotEmpty)
-                              Container(
-                                margin: const EdgeInsets.only(top: 8),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(12),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.1),
-                                      blurRadius: 10,
-                                      offset: const Offset(0, 4),
-                                    ),
-                                  ],
-                                ),
-                                height: 200,
-                                child: ListView.builder(
-                                  itemCount: _filteredCustomers.length,
-                                  itemBuilder: (context, index) {
-                                    Customer customer = _filteredCustomers[index];
-                                    return ListTile(
-                                      leading: const Icon(Icons.person, color: Color(0xFF1A2E35)),
-                                      title: Text(customer.name),
-                                      subtitle: Text("${customer.cardNumber} • ${customer.mobile}"),
-                                      trailing: Text("${customer.points} pts", style: const TextStyle(fontWeight: FontWeight.bold)),
-                                      onTap: () => _selectCustomer(customer),
-                                    );
-                                  },
-                                ),
-                              ),
-                            
-                            // Selected Customer Display
-                            if (_selectedCustomer != null && !_showCustomerList)
-                              Container(
-                                margin: const EdgeInsets.only(top: 12),
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF1A2E35).withOpacity(0.05),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: const Color(0xFF1A2E35).withOpacity(0.2)),
-                                ),
-                                child: Row(
-                                  children: [
-                                    const Icon(Icons.check_circle, color: Colors.green, size: 20),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            _selectedCustomer!.name,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 14,
-                                            ),
-                                          ),
-                                          Text(
-                                            "Card: ${_selectedCustomer!.cardNumber} • Points: ${_selectedCustomer!.points}",
-                                            style: const TextStyle(fontSize: 12, color: Color(0xFF666666)),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                          ],
-                        ),
+                      CustomerSearchCard(
+                        controller: _customerSearchController,
+                        showCustomerList: _showCustomerList,
+                        filteredCustomers: _filteredCustomers,
+                        selectedCustomer: _selectedCustomer,
+                        onClearSelection: _clearCustomerSelection,
+                        onScanBarcode: _scanBarcode,
+                        onSearchTap: () {
+                          setState(() {
+                            _showCustomerList = true;
+                          });
+                        },
+                        onCustomerSelected: _selectCustomer,
                       ),
                       
                       const SizedBox(height: 20),
@@ -2333,8 +2250,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                                         ),
                                       ),
                                       const SizedBox(height: 8),
-                                      TextField(
+                                      HomeTextField(
                                         controller: _unitsController,
+                                        label: "Units",
                                         keyboardType: TextInputType.number,
                                         decoration: InputDecoration(
                                           prefixIcon: const Icon(Icons.format_list_numbered, color: Color(0xFF1A2E35)),
@@ -2360,8 +2278,9 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                                         ),
                                       ),
                                       const SizedBox(height: 8),
-                                      TextField(
+                                      HomeTextField(
                                         controller: _amountController,
+                                        label: "Amount",
                                         keyboardType: TextInputType.number,
                                         decoration: InputDecoration(
                                           prefixIcon: const Icon(Icons.currency_rupee, color: Color(0xFF1A2E35)),
@@ -2533,6 +2452,74 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                             ),
                             
                             const SizedBox(height: 16),
+
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade50,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: const Color(0xFFEEEEEE)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Text(
+                                        "Select Customer",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          color: Color(0xFF1A2E35),
+                                        ),
+                                      ),
+                                      const Spacer(),
+                                      IconButton(
+                                        onPressed: _refreshCustomersFromBackend,
+                                        icon: const Icon(Icons.refresh, size: 20),
+                                        tooltip: "Load customers from backend",
+                                      ),
+                                    ],
+                                  ),
+                                  if (customers.isEmpty)
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: TextButton.icon(
+                                        onPressed: _refreshCustomersFromBackend,
+                                        icon: const Icon(Icons.cloud_download),
+                                        label: const Text("Load customers from backend"),
+                                      ),
+                                    )
+                                  else
+                                    DropdownButtonFormField<Customer>(
+                                      value: selectedCustomerValue,
+                                      isExpanded: true,
+                                      decoration: InputDecoration(
+                                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                      ),
+                                      hint: const Text("Choose a customer"),
+                                      items: customers
+                                          .map(
+                                            (customer) => DropdownMenuItem<Customer>(
+                                              value: customer,
+                                              child: Text(
+                                                "${customer.name} • ${customer.cardNumber} • ${customer.points} pts",
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          )
+                                          .toList(),
+                                      onChanged: (customer) {
+                                        if (customer != null) {
+                                          _selectCustomer(customer);
+                                        }
+                                      },
+                                    ),
+                                ],
+                              ),
+                            ),
                             
                             if (_selectedCustomer == null)
                               Container(
@@ -2772,162 +2759,26 @@ class _MyFormCardState extends State<MyFormCard> with TickerProviderStateMixin {
                   child: Column(
                     children: [
                       // Register New Card
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.05),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              "Register Loyalty Card",
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF1A2E35),
-                              ),
-                            ),
-                            const SizedBox(height: 20),
-                            
-                            // Barcode Scanner
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    controller: _barcodeController,
-                                    decoration: InputDecoration(
-                                      labelText: "Barcode",
-                                      prefixIcon: const Icon(Icons.qr_code_scanner),
-                                      border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                ElevatedButton(
-                                  onPressed: _scanBarcode,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF1A2E35),
-                                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                                  ),
-                                  child: const Text("SCAN"),
-                                ),
-                              ],
-                            ),
-                            
-                            const SizedBox(height: 16),
-                            
-                            TextField(
-                              controller: _cardNumberController,
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                                LengthLimitingTextInputFormatter(19),
-                              ],
-                              onSubmitted: (value) =>
-                                  _lookupCustomerByCardNumber(value, showNotFoundSnackbar: true),
-                              decoration: InputDecoration(
-                                labelText: "Card Number",
-                                prefixIcon: const Icon(Icons.credit_card),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                            ),
-                            
-                            const SizedBox(height: 16),
-                            
-                            TextField(
-                              controller: _customerNameController,
-                              decoration: InputDecoration(
-                                labelText: "Customer Name",
-                                prefixIcon: const Icon(Icons.person),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                            ),
-                            
-                            const SizedBox(height: 16),
-                            
-                            TextField(
-                              controller: _mobileController,
-                              keyboardType: TextInputType.phone,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                                LengthLimitingTextInputFormatter(10),
-                              ],
-                              decoration: InputDecoration(
-                                labelText: "Mobile Number",
-                                prefixIcon: const Icon(Icons.phone),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                            ),
-                            
-                            const SizedBox(height: 20),
-                            
-                            SizedBox(
-                              width: double.infinity,
-                              height: 50,
-                              child: ElevatedButton(
-                                onPressed: _addCustomer,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF1A2E35),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                                child: const Text("REGISTER CARD"),
-                              ),
-                            ),
-                          ],
+                      RegisterLoyaltyCardForm(
+                        barcodeController: _barcodeController,
+                        cardNumberController: _cardNumberController,
+                        customerNameController: _customerNameController,
+                        mobileController: _mobileController,
+                        onScanBarcode: _scanBarcode,
+                        onRegister: _addCustomer,
+                        onCardNumberSubmitted: (value) =>
+                            _lookupCustomerByCardNumber(
+                          value,
+                          showNotFoundSnackbar: true,
                         ),
                       ),
                       
                       const SizedBox(height: 20),
                       
                       // Registered Customers
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.05),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              "Registered Customers",
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF1A2E35),
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            
-                            ...customers.map((customer) => _buildCustomerCard(customer)).toList(),
-                          ],
-                        ),
+                      RegisteredCustomersSection(
+                        customers: customers,
+                        itemBuilder: _buildCustomerCard,
                       ),
                     ],
                   ),
@@ -3301,11 +3152,16 @@ Column(
                             ),
                             SizedBox(
                               width: 110,
-                              child: TextField(
+                              child: HomeTextField(
                                 controller: _petrolPointsController,
+                                label: "Points",
                                 keyboardType: TextInputType.number,
                                 textAlign: TextAlign.center,
                                 textAlignVertical: TextAlignVertical.center,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
                                 decoration: InputDecoration(
                                   hintText: "Points",
                                   border: OutlineInputBorder(
@@ -3316,10 +3172,6 @@ Column(
                                     horizontal: 10,
                                     vertical: 12,
                                   ),
-                                ),
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ),
@@ -3363,11 +3215,16 @@ Column(
                             ),
                             SizedBox(
                               width: 110,
-                              child: TextField(
+                              child: HomeTextField(
                                 controller: _dieselPointsController,
+                                label: "Points",
                                 keyboardType: TextInputType.number,
                                 textAlign: TextAlign.center,
                                 textAlignVertical: TextAlignVertical.center,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
                                 decoration: InputDecoration(
                                   hintText: "Points",
                                   border: OutlineInputBorder(
@@ -3378,10 +3235,6 @@ Column(
                                     horizontal: 10,
                                     vertical: 12,
                                   ),
-                                ),
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ),
@@ -3425,11 +3278,16 @@ Column(
                             ),
                             SizedBox(
                               width: 110,
-                              child: TextField(
+                              child: HomeTextField(
                                 controller: _oilPointsController,
+                                label: "Points",
                                 keyboardType: TextInputType.number,
                                 textAlign: TextAlign.center,
                                 textAlignVertical: TextAlignVertical.center,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
                                 decoration: InputDecoration(
                                   hintText: "Points",
                                   border: OutlineInputBorder(
@@ -3440,10 +3298,6 @@ Column(
                                     horizontal: 10,
                                     vertical: 12,
                                   ),
-                                ),
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ),
@@ -3484,8 +3338,9 @@ Column(
                               ],
                             ),
                             const SizedBox(height: 12),
-                            TextField(
+                            HomeTextField(
                               controller: _amountPointsController,
+                              label: "Points for every ₹ amount",
                               keyboardType: TextInputType.number,
                               textAlignVertical: TextAlignVertical.center,
                               decoration: InputDecoration(
@@ -3806,11 +3661,16 @@ Column(
                                       Expanded(
                                         child: Padding(
                                           padding: const EdgeInsets.symmetric(horizontal: 2),
-                                          child: TextField(
-                                            controller: _purchasePriceControllers[product.name],
+                                          child: HomeTextField(
+                                            controller: _purchasePriceControllers[product.name]!,
+                                            label: "Purchase",
                                             keyboardType: TextInputType.number,
                                             textAlign: TextAlign.center,
                                             textAlignVertical: TextAlignVertical.center,
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
+                                            ),
                                             decoration: InputDecoration(
                                               border: OutlineInputBorder(
                                                 borderRadius: BorderRadius.circular(8),
@@ -3820,10 +3680,6 @@ Column(
                                                 horizontal: 6,
                                                 vertical: 10,
                                               ),
-                                            ),
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w500,
                                             ),
                                           ),
                                         ),
@@ -3831,11 +3687,16 @@ Column(
                                       Expanded(
                                         child: Padding(
                                           padding: const EdgeInsets.symmetric(horizontal: 2),
-                                          child: TextField(
-                                            controller: _sellingPriceControllers[product.name],
+                                          child: HomeTextField(
+                                            controller: _sellingPriceControllers[product.name]!,
+                                            label: "Selling",
                                             keyboardType: TextInputType.number,
                                             textAlign: TextAlign.center,
                                             textAlignVertical: TextAlignVertical.center,
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
+                                            ),
                                             decoration: InputDecoration(
                                               border: OutlineInputBorder(
                                                 borderRadius: BorderRadius.circular(8),
@@ -3845,10 +3706,6 @@ Column(
                                                 horizontal: 6,
                                                 vertical: 10,
                                               ),
-                                            ),
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w500,
                                             ),
                                           ),
                                         ),
@@ -4225,11 +4082,16 @@ Column(
                                     Expanded(
                                       child: Padding(
                                         padding: const EdgeInsets.symmetric(horizontal: 2),
-                                        child: TextField(
-                                          controller: _stockControllers[product.name],
+                                        child: HomeTextField(
+                                          controller: _stockControllers[product.name]!,
+                                          label: "Stock",
                                           keyboardType: TextInputType.number,
                                           textAlign: TextAlign.center,
                                           textAlignVertical: TextAlignVertical.center,
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
+                                          ),
                                           decoration: InputDecoration(
                                             border: OutlineInputBorder(
                                               borderRadius: BorderRadius.circular(8),
@@ -4239,10 +4101,6 @@ Column(
                                               horizontal: 6,
                                               vertical: 10,
                                             ),
-                                          ),
-                                          style: const TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w500,
                                           ),
                                         ),
                                       ),
@@ -4605,11 +4463,16 @@ Column(
                                       Expanded(
                                         child: Padding(
                                           padding: const EdgeInsets.symmetric(horizontal: 2),
-                                          child: TextField(
-                                            controller: _redeemablePointsControllers[item.name],
+                                          child: HomeTextField(
+                                            controller: _redeemablePointsControllers[item.name]!,
+                                            label: "Points",
                                             keyboardType: TextInputType.number,
                                             textAlign: TextAlign.center,
                                             textAlignVertical: TextAlignVertical.center,
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
+                                            ),
                                             decoration: InputDecoration(
                                               border: OutlineInputBorder(
                                                 borderRadius: BorderRadius.circular(8),
@@ -4619,10 +4482,6 @@ Column(
                                                 horizontal: 6,
                                                 vertical: 10,
                                               ),
-                                            ),
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w500,
                                             ),
                                           ),
                                         ),
@@ -4630,11 +4489,16 @@ Column(
                                       Expanded(
                                         child: Padding(
                                           padding: const EdgeInsets.symmetric(horizontal: 2),
-                                          child: TextField(
-                                            controller: _redeemableStockControllers[item.name],
+                                          child: HomeTextField(
+                                            controller: _redeemableStockControllers[item.name]!,
+                                            label: "Stock",
                                             keyboardType: TextInputType.number,
                                             textAlign: TextAlign.center,
                                             textAlignVertical: TextAlignVertical.center,
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
+                                            ),
                                             decoration: InputDecoration(
                                               border: OutlineInputBorder(
                                                 borderRadius: BorderRadius.circular(8),
@@ -4644,10 +4508,6 @@ Column(
                                                 horizontal: 6,
                                                 vertical: 10,
                                               ),
-                                            ),
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w500,
                                             ),
                                           ),
                                         ),
@@ -4765,8 +4625,10 @@ Column(
                                   child: Column(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      TextField(
+                                      HomeTextField(
                                         controller: titleController,
+                                        label: "Title",
+                                        hintText: "Enter notification title",
                                         decoration: InputDecoration(
                                           labelText: "Title",
                                           hintText: "Enter notification title",
@@ -4776,8 +4638,11 @@ Column(
                                         ),
                                       ),
                                       const SizedBox(height: 12),
-                                      TextField(
+                                      HomeTextField(
                                         controller: messageController,
+                                        label: "Message",
+                                        hintText: "Enter notification message",
+                                        maxLines: 3,
                                         decoration: InputDecoration(
                                           labelText: "Message",
                                           hintText: "Enter notification message",
@@ -4785,7 +4650,6 @@ Column(
                                             borderRadius: BorderRadius.circular(12),
                                           ),
                                         ),
-                                        maxLines: 3,
                                       ),
                                     ],
                                   ),
@@ -5183,7 +5047,7 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                "${record.date.day}/${record.date.month}/${record.date.year} ${record.date.hour}:${record.date.minute.toString().padLeft(2, '0')}",
+                _formatKolkataDateTime(record.date),
                 style: const TextStyle(color: Color(0xFF999999), fontSize: 11),
               ),
               Text(
@@ -5277,7 +5141,7 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
                   style: const TextStyle(color: Color(0xFF666666), fontSize: 12),
                 ),
                 Text(
-                  "${record.date.day}/${record.date.month}/${record.date.year}",
+                  _formatKolkataDate(record.date),
                   style: const TextStyle(color: Color(0xFF999999), fontSize: 11),
                 ),
               ],
@@ -5430,29 +5294,31 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
           const SizedBox(width: 12),
           SizedBox(
             width: 100,
-            child: TextField(
-              controller: _purchasePriceControllers[product.name],
+            child: HomeTextField(
+              controller: _purchasePriceControllers[product.name]!,
+              label: "Purchase",
               keyboardType: TextInputType.number,
+              style: const TextStyle(fontSize: 12),
               decoration: const InputDecoration(
                 labelText: "Purchase",
                 border: OutlineInputBorder(),
                 contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               ),
-              style: const TextStyle(fontSize: 12),
             ),
           ),
           const SizedBox(width: 8),
           SizedBox(
             width: 100,
-            child: TextField(
-              controller: _sellingPriceControllers[product.name],
+            child: HomeTextField(
+              controller: _sellingPriceControllers[product.name]!,
+              label: "Selling",
               keyboardType: TextInputType.number,
+              style: const TextStyle(fontSize: 12),
               decoration: const InputDecoration(
                 labelText: "Selling",
                 border: OutlineInputBorder(),
                 contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               ),
-              style: const TextStyle(fontSize: 12),
             ),
           ),
         ],
@@ -5506,15 +5372,16 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
           const SizedBox(width: 12),
           SizedBox(
             width: 150,
-            child: TextField(
-              controller: _stockControllers[product.name],
+            child: HomeTextField(
+              controller: _stockControllers[product.name]!,
+              label: "Update Stock Level",
               keyboardType: TextInputType.number,
+              style: const TextStyle(fontSize: 12),
               decoration: const InputDecoration(
                 labelText: "Update Stock Level",
                 border: OutlineInputBorder(),
                 contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               ),
-              style: const TextStyle(fontSize: 12),
             ),
           ),
         ],
@@ -5532,90 +5399,3 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
 }
 
 // Data Models
-class Product {
-  String name;
-  double pricePerUnit;
-  String unit;
-  double purchasePrice;
-  int stock;
-  
-  Product({
-    required this.name,
-    required this.pricePerUnit,
-    required this.unit,
-    required this.purchasePrice,
-    required this.stock,
-  });
-}
-
-class Customer {
-  String name;
-  String cardNumber;
-  String? barcode;
-  String mobile;
-  int points;
-  
-  Customer({
-    required this.name,
-    required this.cardNumber,
-    this.barcode,
-    required this.mobile,
-    required this.points,
-  });
-}
-
-class SaleRecord {
-  final String product;
-  final int units;
-  final double amount;
-  final double purchaseCost;
-  final String customer;
-  final DateTime date;
-  final int pointsEarned;
-  final double? profit;
-  
-  SaleRecord({
-    required this.product,
-    required this.units,
-    required this.amount,
-    required this.purchaseCost,
-    required this.customer,
-    required this.date,
-    required this.pointsEarned,
-    this.profit,
-  });
-}
-
-class RedeemableProduct {
-  String name;
-  int pointsRequired;
-  int stock;
-  
-  RedeemableProduct({
-    required this.name,
-    required this.pointsRequired,
-    required this.stock,
-  });
-}
-
-class RedemptionItem {
-  RedeemableProduct product;
-  int quantity;
-  
-  RedemptionItem({
-    required this.product,
-    required this.quantity,
-  });
-}
-
-class PushNotificationMessage {
-  int? id;
-  String title;
-  String message;
-  
-  PushNotificationMessage({
-    this.id,
-    required this.title,
-    required this.message,
-  });
-}

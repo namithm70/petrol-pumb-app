@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import 'features/auth/presentation/bloc/auth_bloc.dart';
-import 'features/auth/presentation/bloc/auth_state.dart';
-import 'form.dart';
-import 'login.dart';
+import 'package:bpclpos/features/auth/presentation/bloc/auth_bloc.dart';
+import 'package:bpclpos/features/auth/presentation/bloc/auth_state.dart';
+import 'package:bpclpos/features/auth/presentation/views/login_view.dart';
+import 'package:bpclpos/features/home/presentation/views/home_view.dart';
 
 class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
@@ -24,7 +24,7 @@ class _AuthGateState extends State<AuthGate> {
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        return state.isAuthenticated ? const MyFormCard() : const LoginScreen();
+        return state.isAuthenticated ? const HomeView() : const LoginScreen();
       },
     );
   }

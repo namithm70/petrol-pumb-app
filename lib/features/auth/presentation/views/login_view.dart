@@ -3,9 +3,9 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import 'features/auth/presentation/bloc/auth_bloc.dart';
-import 'features/auth/presentation/bloc/auth_event.dart';
-import 'features/auth/presentation/bloc/auth_state.dart';
+import 'package:bpclpos/features/auth/presentation/bloc/auth_bloc.dart';
+import 'package:bpclpos/features/auth/presentation/bloc/auth_event.dart';
+import 'package:bpclpos/features/auth/presentation/bloc/auth_state.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
