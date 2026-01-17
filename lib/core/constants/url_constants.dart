@@ -1,5 +1,6 @@
 class UrlConstants {
-  static const String baseUrl = 'https://bpclpos-backend-ib1t.onrender.com';
+  // Point mobile clients to the EC2-hosted backend (http on port 3001).
+  static const String baseUrl = 'http://18.61.163.152:3001';
 
   static const String authSetup = '/api/auth/setup';
   static const String authLogin = '/api/auth/login';

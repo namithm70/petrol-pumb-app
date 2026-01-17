@@ -1,0 +1,10 @@
+node_modules
+npm-debug.log
+.npmrc
+.env
+.env.*
+.git
+Dockerfile
+docker-compose.yml
+render.yaml
+../*
