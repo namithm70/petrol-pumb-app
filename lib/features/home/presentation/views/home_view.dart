@@ -8,11 +8,14 @@ import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:bpclpos/app_config.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import 'package:bpclpos/core/session/auth_session_manager.dart';
 import 'package:bpclpos/features/auth/presentation/bloc/auth_bloc.dart';
 import 'package:bpclpos/features/auth/presentation/bloc/auth_event.dart';
 import 'package:bpclpos/features/home/domain/entities/home_entities.dart';
+import 'package:bpclpos/features/home/presentation/printing/sales_report_printer.dart';
 import 'package:bpclpos/features/home/presentation/widgets/customer_search_card.dart';
 import 'package:bpclpos/features/home/presentation/widgets/home_text_field.dart';
 import 'package:bpclpos/features/home/presentation/widgets/registered_customers_section.dart';
@@ -75,6 +78,14 @@ class _HomeViewState extends State<HomeView> with TickerProviderStateMixin {
   Customer? _selectedCustomer;
   bool _showCustomerList = false;
   List<Customer> _filteredCustomers = [];
+
+  final SalesReportPrinter _salesReportPrinter = SalesReportPrinter();
+  BluetoothConnection? _printerConnection;
+  BluetoothDevice? _selectedPrinter;
+  List<BluetoothDevice> _pairedPrinters = [];
+  bool _printerConnecting = false;
+  bool _printerPrinting = false;
+  PrinterCommandSet _printerCommandSet = PrinterCommandSet.escPos;
 
   // Backend sync (prices)
   static const String _backendBaseUrl = backendBaseUrl;
@@ -258,6 +269,10 @@ class _HomeViewState extends State<HomeView> with TickerProviderStateMixin {
     }
 
     _priceSyncTimer?.cancel();
+    if (_printerConnection != null) {
+      unawaited(_printerConnection!.finish());
+      _printerConnection = null;
+    }
     
     super.dispose();
   }
@@ -627,6 +642,333 @@ class _HomeViewState extends State<HomeView> with TickerProviderStateMixin {
   String _formatKolkataDate(DateTime dateTime) {
     final local = _toKolkataTime(dateTime);
     return "${local.day}/${local.month}/${local.year}";
+  }
+
+  int _androidSdkInt() {
+    if (!Platform.isAndroid) return 0;
+    final version = Platform.operatingSystemVersion;
+    final match = RegExp(r'SDK (\d+)').firstMatch(version);
+    if (match == null) return 0;
+    return int.tryParse(match.group(1) ?? '') ?? 0;
+  }
+
+  bool get _printerConnected =>
+      _printerConnection != null && _printerConnection!.isConnected;
+
+  String _printerDisplayName(BluetoothDevice device) {
+    final name = device.name?.trim();
+    if (name != null && name.isNotEmpty) {
+      return name;
+    }
+    return device.address;
+  }
+
+  String _printerStatusLabel() {
+    if (_selectedPrinter == null) return "No printer selected";
+    final name = _printerDisplayName(_selectedPrinter!);
+    return _printerConnected ? "Connected: $name" : "Selected: $name";
+  }
+
+  void _showPrinterSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<bool> _requestBluetoothPermissions() async {
+    if (!Platform.isAndroid) {
+      _showAlert(
+        "Not Supported",
+        "Bluetooth printing is available on Android devices only.",
+      );
+      return false;
+    }
+
+    final sdkInt = _androidSdkInt();
+    final permissions = <Permission>[];
+    if (sdkInt >= 31 || sdkInt == 0) {
+      permissions.add(Permission.bluetoothScan);
+      permissions.add(Permission.bluetoothConnect);
+    } else {
+      permissions.add(Permission.bluetooth);
+    }
+
+    final statuses = await permissions.request();
+
+    final granted = permissions.every(
+      (permission) => statuses[permission]?.isGranted ?? false,
+    );
+    if (!granted) {
+      final permanentlyDenied = statuses.values.any(
+        (status) => status.isPermanentlyDenied,
+      );
+      if (permanentlyDenied) {
+        if (!mounted) return false;
+        await showDialog<void>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text("Bluetooth Permission Required"),
+            content: const Text(
+              "Bluetooth permission is blocked. Open settings to allow it.",
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel"),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  openAppSettings();
+                },
+                child: const Text("Open Settings"),
+              ),
+            ],
+          ),
+        );
+      } else {
+        _showAlert(
+          "Bluetooth Permission Required",
+          "Please allow Bluetooth permissions to connect to the printer.",
+        );
+      }
+    }
+    return granted;
+  }
+
+  Future<bool> _ensureBluetoothReady() async {
+    final allowed = await _requestBluetoothPermissions();
+    if (!allowed) return false;
+
+    final isEnabled = await FlutterBluetoothSerial.instance.isEnabled ?? false;
+    if (!isEnabled) {
+      final enabled = await FlutterBluetoothSerial.instance.requestEnable();
+      if (enabled != true) {
+        _showAlert(
+          "Bluetooth Disabled",
+          "Please enable Bluetooth to connect to the printer.",
+        );
+        return false;
+      }
+    }
+    return true;
+  }
+
+  Future<void> _loadPairedPrinters() async {
+    try {
+      final devices = await FlutterBluetoothSerial.instance.getBondedDevices();
+      if (!mounted) return;
+      setState(() {
+        _pairedPrinters = devices;
+      });
+    } catch (e) {
+      _showAlert("Bluetooth Error", "Could not load paired devices. $e");
+    }
+  }
+
+  Future<void> _openPrinterPicker() async {
+    if (_printerConnecting) return;
+    final ready = await _ensureBluetoothReady();
+    if (!ready) return;
+
+    await _loadPairedPrinters();
+    if (!mounted) return;
+
+    if (_pairedPrinters.isEmpty) {
+      _showAlert(
+        "No Paired Printers",
+        "Pair the printer in Bluetooth settings and try again.",
+      );
+      return;
+    }
+
+    final selected = await showModalBottomSheet<BluetoothDevice>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  "Select Printer",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1A2E35),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _pairedPrinters.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final device = _pairedPrinters[index];
+                      final isSelected =
+                          _selectedPrinter?.address == device.address;
+                      return ListTile(
+                        title: Text(_printerDisplayName(device)),
+                        subtitle: Text(device.address),
+                        trailing: isSelected
+                            ? const Icon(Icons.check, color: Colors.green)
+                            : null,
+                        onTap: () => Navigator.pop(context, device),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (selected != null) {
+      await _connectPrinter(selected);
+    }
+  }
+
+  Future<bool> _connectPrinter(BluetoothDevice device) async {
+    if (_printerConnecting) return false;
+    setState(() {
+      _printerConnecting = true;
+      _selectedPrinter = device;
+    });
+
+    try {
+      if (_printerConnection != null) {
+        await _printerConnection!.finish();
+      }
+      final connection = await BluetoothConnection.toAddress(device.address);
+      if (!mounted) return false;
+      _printerConnection = connection;
+      _printerConnection?.input?.listen((_) {}).onDone(() {
+        if (!mounted) return;
+        setState(() {
+          _printerConnection = null;
+        });
+      });
+      _showPrinterSnack("Printer connected.");
+      return true;
+    } catch (e) {
+      if (mounted) {
+        _showAlert("Connection Failed", "Could not connect to printer. $e");
+      }
+      return false;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _printerConnecting = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _disconnectPrinter() async {
+    try {
+      if (_printerConnection != null) {
+        await _printerConnection!.finish();
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _printerConnection = null;
+    });
+  }
+
+  Future<void> _printSalesReport() async {
+    if (salesRecords.isEmpty) {
+      _showAlert("No Sales Data", "Add sales before printing a report.");
+      return;
+    }
+
+    final ready = await _ensurePrinterReady();
+    if (!ready) return;
+
+    setState(() {
+      _printerPrinting = true;
+    });
+
+    try {
+      final bytes = _salesReportPrinter.buildReport(
+        commandSet: _printerCommandSet,
+        salesRecords: salesRecords,
+        totalSales: _totalSales,
+        totalUnits: _totalUnits,
+        totalProfit: _totalProfit,
+        printedAt: _formatKolkataDateTime(DateTime.now()),
+        formatDateTime: _formatKolkataDateTime,
+      );
+      if (_printerConnection == null) {
+        throw StateError("Printer connection is not available.");
+      }
+      _printerConnection!.output.add(Uint8List.fromList(bytes));
+      await _printerConnection!.output.allSent;
+      _showPrinterSnack("Report sent to printer.");
+    } catch (e) {
+      _showAlert("Print Failed", "Could not print report. $e");
+    } finally {
+      if (mounted) {
+        setState(() {
+          _printerPrinting = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _printTestLabel() async {
+    final ready = await _ensurePrinterReady();
+    if (!ready) return;
+
+    setState(() {
+      _printerPrinting = true;
+    });
+
+    try {
+      final bytes =
+          _salesReportPrinter.buildTestLabel(commandSet: _printerCommandSet);
+      if (_printerConnection == null) {
+        throw StateError("Printer connection is not available.");
+      }
+      _printerConnection!.output.add(Uint8List.fromList(bytes));
+      await _printerConnection!.output.allSent;
+      _showPrinterSnack("Test label sent to printer.");
+    } catch (e) {
+      _showAlert("Print Failed", "Could not print test label. $e");
+    } finally {
+      if (mounted) {
+        setState(() {
+          _printerPrinting = false;
+        });
+      }
+    }
+  }
+
+  Future<bool> _ensurePrinterReady() async {
+    if (_selectedPrinter == null) {
+      _showAlert("Select Printer", "Choose a Bluetooth printer first.");
+      return false;
+    }
+
+    final ready = await _ensureBluetoothReady();
+    if (!ready) return false;
+
+    if (!_printerConnected) {
+      final connected = await _connectPrinter(_selectedPrinter!);
+      if (!connected) return false;
+    }
+    return true;
   }
 
   void _openNotificationsPanel() {
@@ -2787,6 +3129,10 @@ class _HomeViewState extends State<HomeView> with TickerProviderStateMixin {
                 // REPORTS TAB
                 Column(
                   children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+                      child: _buildPrinterPanel(),
+                    ),
                     Container(
                       color: const Color(0xFFF8F9FA),
                       child: TabBar(
@@ -4964,6 +5310,164 @@ Widget _buildQuickActionButton(String label, IconData icon, Color color, VoidCal
                 tooltip: "Delete",
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrinterPanel() {
+    final hasPrinter = _selectedPrinter != null;
+    final isConnected = _printerConnected;
+    final canPrint =
+        hasPrinter && salesRecords.isNotEmpty && !_printerPrinting;
+    final statusColor = isConnected
+        ? Colors.green
+        : hasPrinter
+            ? Colors.orange
+            : const Color(0xFF999999);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFEEEEEE)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.print, color: statusColor),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      "Sales Report Printer",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1A2E35),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _printerStatusLabel(),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: statusColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (_printerConnecting)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _printerConnecting ? null : _openPrinterPicker,
+                icon: const Icon(Icons.bluetooth),
+                label: Text(hasPrinter ? "Change Printer" : "Select Printer"),
+              ),
+              if (isConnected)
+                TextButton(
+                  onPressed: _disconnectPrinter,
+                  child: const Text("Disconnect"),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Icon(Icons.settings, size: 18, color: Color(0xFF666666)),
+              const SizedBox(width: 8),
+              const Text(
+                "Printer Mode",
+                style: TextStyle(fontSize: 12, color: Color(0xFF666666)),
+              ),
+              const Spacer(),
+              DropdownButtonHideUnderline(
+                child: DropdownButton<PrinterCommandSet>(
+                  value: _printerCommandSet,
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _printerCommandSet = value;
+                    });
+                  },
+                  items: const [
+                    DropdownMenuItem(
+                      value: PrinterCommandSet.cpcl,
+                      child: Text("Label (CPCL)"),
+                    ),
+                    DropdownMenuItem(
+                      value: PrinterCommandSet.tspl,
+                      child: Text("Label (TSPL)"),
+                    ),
+                    DropdownMenuItem(
+                      value: PrinterCommandSet.zpl,
+                      child: Text("Label (ZPL)"),
+                    ),
+                    DropdownMenuItem(
+                      value: PrinterCommandSet.escPos,
+                      child: Text("Receipt (ESC/POS)"),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: ElevatedButton.icon(
+              onPressed: canPrint ? _printSalesReport : null,
+              icon: _printerPrinting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : const Icon(Icons.receipt_long),
+              label: Text(_printerPrinting ? "Printing..." : "Print Sales Report"),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1A2E35),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            height: 40,
+            child: OutlinedButton.icon(
+              onPressed: _printerPrinting ? null : _printTestLabel,
+              icon: const Icon(Icons.print),
+              label: const Text("Test Print"),
+            ),
           ),
         ],
       ),
